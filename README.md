@@ -33,4 +33,10 @@ ENERGY_INITIAL_PASSWORD=dev-password ENERGY_SESSION_SECRET=dev-secret uvicorn ap
 
 ## Existing-log import
 
-The importer will be added after inspecting a short representative sample of the existing refrigerator and washer logs. It will be idempotent so it is safe to rerun.
+The current collector's JSON-lines format can be imported without losing the original Shelly status object. Copy the log into the repository directory on the server, then run:
+
+```sh
+docker compose exec home-energy python -m app.import_logs /app/data/collector.log
+```
+
+The device IPs must first exist in Settings. The importer is idempotent: re-running it does not duplicate device/timestamp readings.

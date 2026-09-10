@@ -105,10 +105,10 @@ def delete_device(device_id):
         conn.execute("DELETE FROM devices WHERE id=?", (device_id,))
 
 
-def save_reading(device_id, watts=None, voltage=None, current=None, total_kwh=None, payload=None, error=None):
+def save_reading(device_id, watts=None, voltage=None, current=None, total_kwh=None, payload=None, error=None, observed_at=None):
     with connection() as conn:
-        conn.execute("""INSERT INTO readings(device_id, observed_at, watts, voltage, current, total_kwh, raw_json, error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (device_id, iso(), watts, voltage, current, total_kwh, json.dumps(payload) if payload else None, error))
+        conn.execute("""INSERT OR IGNORE INTO readings(device_id, observed_at, watts, voltage, current, total_kwh, raw_json, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (device_id, observed_at or iso(), watts, voltage, current, total_kwh, json.dumps(payload) if payload else None, error))
 
 
 RANGES = {"24h": (24, "raw"), "7d": (168, "raw"), "30d": (720, "5m"), "6mo": (4320, "hour"), "18mo": (13152, "day")}
