@@ -4,7 +4,7 @@ services:
     container_name: home-energy
     restart: unless-stopped
     ports:
-      - "192.168.1.10:8088:8000" # Replace with the Linux server's LAN address.
+      - "192.168.1.100:8088:8000" # Bind only to the Linux server's LAN address.
     environment:
       ENERGY_DATA_DIR: /app/data
       ENERGY_INITIAL_PASSWORD: ${ENERGY_INITIAL_PASSWORD:?Set this in .env before first start}
