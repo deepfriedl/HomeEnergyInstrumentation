@@ -111,31 +111,43 @@ def save_reading(device_id, watts=None, voltage=None, current=None, total_kwh=No
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (device_id, iso(), watts, voltage, current, total_kwh, json.dumps(payload) if payload else None, error))
 
 
-def overview(hours=24):
+RANGES = {"24h": (24, "raw"), "7d": (168, "raw"), "30d": (720, "5m"), "6mo": (4320, "hour"), "18mo": (13152, "day")}
+
+
+def overview(range_key="24h"):
+    hours, resolution = RANGES.get(range_key, RANGES["24h"])
     cutoff = iso(now() - timedelta(hours=hours))
     with connection() as conn:
         rows = conn.execute("""SELECT d.id, d.name, d.color, r.* FROM devices d
           LEFT JOIN readings r ON r.id=(SELECT id FROM readings WHERE device_id=d.id ORDER BY observed_at DESC LIMIT 1)
           ORDER BY d.name""").fetchall()
-        series = conn.execute("""SELECT observed_at, SUM(watts) watts, AVG(voltage) voltage, COUNT(watts) reporters
-          FROM readings WHERE observed_at >= ? AND watts IS NOT NULL GROUP BY observed_at ORDER BY observed_at""", (cutoff,)).fetchall()
+        if resolution == "raw":
+            series = conn.execute("""SELECT observed_at, SUM(watts) watts, AVG(voltage) voltage, COUNT(watts) reporters
+              FROM readings WHERE observed_at >= ? AND watts IS NOT NULL GROUP BY observed_at ORDER BY observed_at""", (cutoff,)).fetchall()
+        else:
+            series = conn.execute("""SELECT bucket_start AS observed_at, SUM(avg_watts) watts, AVG(avg_voltage) voltage, SUM(sample_count) reporters
+              FROM rollups WHERE resolution=? AND bucket_start >= ? GROUP BY bucket_start ORDER BY bucket_start""", (resolution, cutoff)).fetchall()
     return [dict(row) for row in rows], [dict(row) for row in series]
 
 
-def device_series(device_id, hours=24):
+def device_series(device_id, range_key="24h"):
+    hours, resolution = RANGES.get(range_key, RANGES["24h"])
     cutoff = iso(now() - timedelta(hours=hours))
     with connection() as conn:
-        return [dict(row) for row in conn.execute("SELECT observed_at, watts, voltage FROM readings WHERE device_id=? AND observed_at>=? ORDER BY observed_at", (device_id, cutoff))]
+        if resolution == "raw":
+            rows = conn.execute("SELECT observed_at, watts, voltage FROM readings WHERE device_id=? AND observed_at>=? ORDER BY observed_at", (device_id, cutoff))
+        else:
+            rows = conn.execute("SELECT bucket_start AS observed_at, avg_watts AS watts, avg_voltage AS voltage FROM rollups WHERE device_id=? AND resolution=? AND bucket_start>=? ORDER BY bucket_start", (device_id, resolution, cutoff))
+        return [dict(row) for row in rows]
 
 
 def cleanup_and_rollup():
     """Create 5-minute/hourly/daily aggregates and remove expired raw payloads/minute readings."""
     with connection() as conn:
-        for resolution, fmt, start in (("5m", "%Y-%m-%dT%H:%M:00+00:00", now()-timedelta(days=30)), ("hour", "%Y-%m-%dT%H:00:00+00:00", now()-timedelta(days=180)), ("day", "%Y-%m-%dT00:00:00+00:00", now()-timedelta(days=548))):
+        for resolution, fmt in (("5m", "%Y-%m-%dT%H:%M:00+00:00"), ("hour", "%Y-%m-%dT%H:00:00+00:00"), ("day", "%Y-%m-%dT00:00:00+00:00")):
             # SQLite date functions make rollups portable and idempotent.
-            modifier = "-" + ("5 minutes" if resolution == "5m" else "1 hour" if resolution == "hour" else "1 day")
             conn.execute(f"""INSERT OR REPLACE INTO rollups(device_id,resolution,bucket_start,avg_watts,max_watts,avg_voltage,min_voltage,max_voltage,sample_count)
               SELECT device_id, ?, strftime(?, observed_at), AVG(watts), MAX(watts), AVG(voltage), MIN(voltage), MAX(voltage), COUNT(*)
-              FROM readings WHERE observed_at < ? GROUP BY device_id, strftime(?, observed_at)""", (resolution, fmt, iso(start), fmt))
+              FROM readings GROUP BY device_id, strftime(?, observed_at)""", (resolution, fmt, fmt))
         conn.execute("UPDATE readings SET raw_json=NULL WHERE observed_at < ?", (iso(now()-timedelta(days=30)),))
         conn.execute("DELETE FROM readings WHERE observed_at < ?", (iso(now()-timedelta(days=7)),))

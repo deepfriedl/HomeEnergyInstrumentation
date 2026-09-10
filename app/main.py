@@ -60,20 +60,20 @@ def logout(request: Request):
 
 
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request):
+def dashboard(request: Request, range: str = "24h"):
     redirect = require_login(request)
     if redirect: return redirect
-    devices, series = db.overview()
-    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series})
+    devices, series = db.overview(range)
+    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "range": range, "ranges": db.RANGES})
 
 
 @app.get("/devices/{device_id}", response_class=HTMLResponse)
-def device_detail(request: Request, device_id: int):
+def device_detail(request: Request, device_id: int, range: str = "24h"):
     redirect = require_login(request)
     if redirect: return redirect
     device = next((item for item in db.devices() if item["id"] == device_id), None)
     if not device: return RedirectResponse("/", status_code=303)
-    return templates.TemplateResponse(request, "device.html", {"device": device, "series": db.device_series(device_id)})
+    return templates.TemplateResponse(request, "device.html", {"device": device, "series": db.device_series(device_id, range), "range": range, "ranges": db.RANGES})
 
 
 @app.get("/settings", response_class=HTMLResponse)
