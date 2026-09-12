@@ -9,6 +9,7 @@ from pathlib import Path
 
 DATA_DIR = Path(os.getenv("ENERGY_DATA_DIR", "data"))
 DB_PATH = DATA_DIR / "home-energy.sqlite3"
+LAN_CONFIG_PATH = Path(os.getenv("ENERGY_LAN_CONFIG", "config/lan.json"))
 
 
 def now() -> datetime:
@@ -33,6 +34,7 @@ def connection():
 
 
 def initialize():
+    initial_devices = load_lan_devices()
     with connection() as conn:
         conn.executescript("""
         CREATE TABLE IF NOT EXISTS users (
@@ -63,11 +65,31 @@ def initialize():
             password = os.getenv("ENERGY_INITIAL_PASSWORD")
             if password:
                 conn.execute("INSERT INTO users VALUES (?, ?, ?)", ("admin", hash_password(password), iso()))
-        if not conn.execute("SELECT 1 FROM devices").fetchone():
-            conn.executemany("INSERT INTO devices(name, ip_address, color, enabled, created_at) VALUES (?, ?, ?, 1, ?)", [
-                ("Refrigerator", "192.168.1.101", "#64d8cb", iso()),
-                ("Clothes washer", "192.168.1.102", "#91a7ff", iso()),
+        if initial_devices and not conn.execute("SELECT 1 FROM devices").fetchone():
+            conn.executemany("INSERT INTO devices(name, ip_address, color, enabled, created_at) VALUES (?, ?, ?, ?, ?)", [
+                (device["name"], device["ip_address"], device.get("color", "#64d8cb"), int(device.get("enabled", True)), iso())
+                for device in initial_devices
             ])
+    if not LAN_CONFIG_PATH.exists() and devices():
+        write_lan_config()
+
+
+def load_lan_devices():
+    if not LAN_CONFIG_PATH.exists():
+        return []
+    try:
+        loaded = json.loads(LAN_CONFIG_PATH.read_text(encoding="utf-8"))
+        return [device for device in loaded.get("devices", []) if device.get("name") and device.get("ip_address")]
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def write_lan_config():
+    LAN_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"devices": [{key: device[key] for key in ("name", "ip_address", "color", "enabled")} for device in devices()]}
+    temporary = LAN_CONFIG_PATH.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(LAN_CONFIG_PATH)
 
 
 def hash_password(password: str) -> str:
@@ -98,11 +120,13 @@ def save_device(name, ip_address, color, enabled, device_id=None):
             conn.execute("UPDATE devices SET name=?, ip_address=?, color=?, enabled=? WHERE id=?", (name, ip_address, color, enabled, device_id))
         else:
             conn.execute("INSERT INTO devices(name, ip_address, color, enabled, created_at) VALUES (?, ?, ?, ?, ?)", (name, ip_address, color, enabled, iso()))
+    write_lan_config()
 
 
 def delete_device(device_id):
     with connection() as conn:
         conn.execute("DELETE FROM devices WHERE id=?", (device_id,))
+    write_lan_config()
 
 
 def save_reading(device_id, watts=None, voltage=None, current=None, total_kwh=None, payload=None, error=None, observed_at=None):

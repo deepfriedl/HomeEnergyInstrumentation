@@ -1,4 +1,5 @@
 .env
 data/
+config/lan.json
 __pycache__/
 .pytest_cache/

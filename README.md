@@ -5,10 +5,10 @@ LAN-only dashboard and structured collector for Shelly smart plugs.
 ## First deployment on the Linux server
 
 1. Install Docker Engine and the Docker Compose plugin.
-2. Copy this repository to the server. The included Compose file binds the app to the server's LAN address, `192.168.1.100`, rather than every interface.
-3. Copy `.env.example` to `.env`; set a strong password and a long random session secret. Keep `.env` private.
+2. Copy this repository to the server. Copy `.env.example` to `.env`; set the server's LAN address, a strong password, and a long random session secret. Keep `.env` private.
+3. Copy `config/lan.example.json` to `config/lan.json` and add device names and addresses. This private LAN configuration is ignored by Git.
 4. Start it with `docker compose up -d --build`.
-5. Browse to `http://<server-LAN-address>:8088`, sign in as `admin`, and add the Shelly plugs in Settings.
+5. Browse to `http://<server-LAN-address>:8088` and sign in as `admin`.
 
 The first deployment creates the local account from `ENERGY_INITIAL_PASSWORD`. Changing that value later does not change the saved password.
 
