@@ -20,9 +20,16 @@ def import_file(path: Path) -> tuple[int, int]:
             try:
                 record = json.loads(line)
                 device = devices_by_ip.get(record["ip"])
-                status = record["status"]
                 if not device:
                     raise ValueError(f"unconfigured device IP {record['ip']}")
+                if "error" in record:
+                    db.save_reading(
+                        device_id=device["id"], observed_at=record["timestamp"],
+                        error=str(record["error"]),
+                    )
+                    imported += 1
+                    continue
+                status = record["status"]
                 db.save_reading(
                     device_id=device["id"], observed_at=record["timestamp"],
                     watts=status.get("apower"), voltage=status.get("voltage"),
