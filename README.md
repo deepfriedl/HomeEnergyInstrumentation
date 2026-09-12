@@ -40,3 +40,22 @@ docker compose exec home-energy python -m app.import_logs /app/data/collector.lo
 ```
 
 The device IPs must first exist in Settings. The importer is idempotent: re-running it does not duplicate device/timestamp readings.
+
+## Lennox S40 discovery
+
+The optional discovery command makes a read-only local connection to a Lennox
+S40. It records the available operating fields, zones, equipment models, and
+diagnostics in `data/lennox-discovery.json`. It intentionally excludes the
+thermostat serial number, Wi-Fi details, and network address.
+
+Set `ENERGY_LENNOX_HOST` in the private `.env` file, rebuild the container,
+then run:
+
+```sh
+docker compose up -d --build
+docker compose exec home-energy python -m app.lennox_discovery
+```
+
+The command changes no thermostat setting. Review `data/lennox-discovery.json`
+locally before sharing any part of it; it is ignored by Git along with the rest
+of `data/`.
