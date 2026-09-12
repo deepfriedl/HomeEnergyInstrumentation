@@ -20,6 +20,14 @@ def iso(value: datetime | None = None) -> str:
     return (value or now()).isoformat(timespec="seconds")
 
 
+def admin_username() -> str:
+    """Return the single allowed login name from private deployment config."""
+    value = os.getenv("ENERGY_ADMIN_USERNAME", "").strip()
+    if not value:
+        raise RuntimeError("Set ENERGY_ADMIN_USERNAME in .env before starting the application.")
+    return value
+
+
 @contextmanager
 def connection():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -35,6 +43,7 @@ def connection():
 
 def initialize():
     initial_devices = load_lan_devices()
+    username = admin_username()
     with connection() as conn:
         conn.executescript("""
         CREATE TABLE IF NOT EXISTS users (
@@ -80,10 +89,10 @@ def initialize():
         );
         CREATE INDEX IF NOT EXISTS hvac_rollups_range ON hvac_rollups(resolution, bucket_start);
         """)
-        if not conn.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone():
+        if not conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
             password = os.getenv("ENERGY_INITIAL_PASSWORD")
             if password:
-                conn.execute("INSERT INTO users VALUES (?, ?, ?)", ("admin", hash_password(password), iso()))
+                conn.execute("INSERT INTO users VALUES (?, ?, ?)", (username, hash_password(password), iso()))
         if initial_devices and not conn.execute("SELECT 1 FROM devices").fetchone():
             conn.executemany("INSERT INTO devices(name, ip_address, color, enabled, created_at) VALUES (?, ?, ?, ?, ?)", [
                 (device["name"], device["ip_address"], device.get("color", "#64d8cb"), int(device.get("enabled", True)), iso())

@@ -7,6 +7,7 @@ services:
       - "${ENERGY_BIND_ADDRESS:?Set this in .env}:8088:8000"
     environment:
       ENERGY_DATA_DIR: /app/data
+      ENERGY_ADMIN_USERNAME: ${ENERGY_ADMIN_USERNAME:?Set this in .env}
       ENERGY_INITIAL_PASSWORD: ${ENERGY_INITIAL_PASSWORD:?Set this in .env before first start}
       ENERGY_SESSION_SECRET: ${ENERGY_SESSION_SECRET:?Set this in .env}
       ENERGY_LENNOX_HOST: ${ENERGY_LENNOX_HOST:-}

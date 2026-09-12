@@ -5,10 +5,10 @@ LAN-only dashboard and structured collector for Shelly smart plugs.
 ## First deployment on the Linux server
 
 1. Install Docker Engine and the Docker Compose plugin.
-2. Copy this repository to the server. Copy `.env.example` to `.env`; set the server's LAN address, a strong password, and a long random session secret. Keep `.env` private.
+2. Copy this repository to the server. Copy `.env.example` to `.env`; set a private login name, the server's LAN address, a strong password, and a long random session secret. Keep `.env` private.
 3. Copy `config/lan.example.json` to `config/lan.json` and add device names and addresses. This private LAN configuration is ignored by Git.
 4. Start it with `docker compose up -d --build`.
-5. Browse to `http://<server-LAN-address>:8088` and sign in as `admin`.
+5. Browse to `http://<server-LAN-address>:8088` and sign in with the private login name from `.env`.
 
 The first deployment creates the local account from `ENERGY_INITIAL_PASSWORD`. Changing that value later does not change the saved password.
 
@@ -28,7 +28,7 @@ Copy the generated file off the server if you want a second copy. Minute samples
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
-ENERGY_INITIAL_PASSWORD=dev-password ENERGY_SESSION_SECRET=dev-secret uvicorn app.main:app --reload
+ENERGY_ADMIN_USERNAME=admin ENERGY_INITIAL_PASSWORD=dev-password ENERGY_SESSION_SECRET=dev-secret uvicorn app.main:app --reload
 ```
 
 ## Existing-log import

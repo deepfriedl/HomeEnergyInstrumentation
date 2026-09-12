@@ -33,12 +33,15 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Home Energy", lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key=os.getenv("ENERGY_SESSION_SECRET", "development-only-secret"), https_only=False, same_site="lax")
+session_secret = os.getenv("ENERGY_SESSION_SECRET")
+if not session_secret:
+    raise RuntimeError("Set ENERGY_SESSION_SECRET in .env before starting the application.")
+app.add_middleware(SessionMiddleware, secret_key=session_secret, https_only=False, same_site="lax")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
-def signed_in(request): return request.session.get("user") == "admin"
+def signed_in(request): return request.session.get("user") == db.admin_username()
 def require_login(request): return None if signed_in(request) else RedirectResponse("/login", status_code=303)
 
 
@@ -49,10 +52,11 @@ def login_form(request: Request):
 
 @app.post("/login", response_class=HTMLResponse)
 def login(request: Request, username: str = Form(), password: str = Form()):
+    configured_username = db.admin_username()
     with db.connection() as conn:
-        row = conn.execute("SELECT password_hash FROM users WHERE username=?", (username,)).fetchone()
-    if row and db.verify_password(password, row["password_hash"]):
-        request.session["user"] = "admin"
+        row = conn.execute("SELECT password_hash FROM users WHERE username=?", (configured_username,)).fetchone()
+    if username == configured_username and row and db.verify_password(password, row["password_hash"]):
+        request.session["user"] = configured_username
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse(request, "login.html", {"error": "Invalid username or password."}, status_code=401)
 
