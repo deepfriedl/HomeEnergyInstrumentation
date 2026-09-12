@@ -11,11 +11,13 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app import db
 from app.collector import collect_once
+from app.lennox import LennoxCollector
 
 
-async def collector_loop():
+async def collector_loop(lennox_collector):
     while True:
         await collect_once()
+        await lennox_collector.collect_once()
         db.cleanup_and_rollup()
         await asyncio.sleep(60)
 
@@ -23,9 +25,11 @@ async def collector_loop():
 @asynccontextmanager
 async def lifespan(app):
     db.initialize()
-    task = asyncio.create_task(collector_loop())
+    lennox_collector = LennoxCollector()
+    task = asyncio.create_task(collector_loop(lennox_collector))
     yield
     task.cancel()
+    await lennox_collector.shutdown()
 
 
 app = FastAPI(title="Home Energy", lifespan=lifespan)

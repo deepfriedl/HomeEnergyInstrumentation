@@ -60,6 +60,25 @@ def initialize():
           UNIQUE(device_id, resolution, bucket_start)
         );
         CREATE INDEX IF NOT EXISTS rollups_range ON rollups(resolution, bucket_start);
+        CREATE TABLE IF NOT EXISTS hvac_readings (
+          id INTEGER PRIMARY KEY,
+          observed_at TEXT NOT NULL UNIQUE,
+          indoor_temp_f REAL, indoor_humidity_pct REAL, outdoor_temp_f REAL,
+          cooling_rate_pct REAL, heating_rate_pct REAL, blower_cfm REAL,
+          system_mode TEXT, operation TEXT, fan_running INTEGER,
+          aux_active INTEGER, defrost_active INTEGER, alert_count INTEGER,
+          raw_json TEXT, error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS hvac_readings_time ON hvac_readings(observed_at);
+        CREATE TABLE IF NOT EXISTS hvac_rollups (
+          id INTEGER PRIMARY KEY, resolution TEXT NOT NULL, bucket_start TEXT NOT NULL,
+          avg_indoor_temp_f REAL, avg_indoor_humidity_pct REAL, avg_outdoor_temp_f REAL,
+          avg_cooling_rate_pct REAL, max_cooling_rate_pct REAL,
+          avg_heating_rate_pct REAL, max_heating_rate_pct REAL,
+          avg_blower_cfm REAL, max_blower_cfm REAL, sample_count INTEGER NOT NULL,
+          UNIQUE(resolution, bucket_start)
+        );
+        CREATE INDEX IF NOT EXISTS hvac_rollups_range ON hvac_rollups(resolution, bucket_start);
         """)
         if not conn.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone():
             password = os.getenv("ENERGY_INITIAL_PASSWORD")
@@ -135,6 +154,25 @@ def save_reading(device_id, watts=None, voltage=None, current=None, total_kwh=No
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (device_id, observed_at or iso(), watts, voltage, current, total_kwh, json.dumps(payload) if payload else None, error))
 
 
+def save_hvac_reading(snapshot=None, error=None, observed_at=None):
+    """Store one normalized S40 state snapshot alongside its structured payload."""
+    snapshot = snapshot or {}
+    with connection() as conn:
+        conn.execute("""INSERT OR IGNORE INTO hvac_readings(
+          observed_at, indoor_temp_f, indoor_humidity_pct, outdoor_temp_f,
+          cooling_rate_pct, heating_rate_pct, blower_cfm, system_mode,
+          operation, fan_running, aux_active, defrost_active, alert_count,
+          raw_json, error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+            observed_at or iso(),
+            snapshot.get("indoor_temp_f"), snapshot.get("indoor_humidity_pct"), snapshot.get("outdoor_temp_f"),
+            snapshot.get("cooling_rate_pct"), snapshot.get("heating_rate_pct"), snapshot.get("blower_cfm"),
+            snapshot.get("system_mode"), snapshot.get("operation"), snapshot.get("fan_running"),
+            snapshot.get("aux_active"), snapshot.get("defrost_active"), snapshot.get("alert_count"),
+            json.dumps(snapshot) if snapshot else None, error,
+        ))
+
+
 RANGES = {"24h": (24, "raw"), "7d": (168, "raw"), "30d": (720, "5m"), "6m": (4320, "hour"), "12m": (8760, "day"), "18m": (13152, "day")}
 
 
@@ -193,5 +231,22 @@ def cleanup_and_rollup():
             conn.execute(f"""INSERT OR REPLACE INTO rollups(device_id,resolution,bucket_start,avg_watts,max_watts,avg_voltage,min_voltage,max_voltage,sample_count)
               SELECT device_id, ?, strftime(?, observed_at), AVG(watts), MAX(watts), AVG(voltage), MIN(voltage), MAX(voltage), COUNT(*)
               FROM readings GROUP BY device_id, strftime(?, observed_at)""", (resolution, fmt, fmt))
+        for resolution, days in (("5m", 30), ("hour", 183), ("day", 548)):
+            conn.execute("DELETE FROM rollups WHERE resolution=? AND bucket_start < ?", (resolution, iso(now()-timedelta(days=days))))
         conn.execute("UPDATE readings SET raw_json=NULL WHERE observed_at < ?", (iso(now()-timedelta(days=30)),))
         conn.execute("DELETE FROM readings WHERE observed_at < ?", (iso(now()-timedelta(days=7)),))
+        for resolution, fmt in (("5m", "%Y-%m-%dT%H:%M:00+00:00"), ("hour", "%Y-%m-%dT%H:00:00+00:00"), ("day", "%Y-%m-%dT00:00:00+00:00")):
+            conn.execute(f"""INSERT OR REPLACE INTO hvac_rollups(
+              resolution, bucket_start, avg_indoor_temp_f, avg_indoor_humidity_pct,
+              avg_outdoor_temp_f, avg_cooling_rate_pct, max_cooling_rate_pct,
+              avg_heating_rate_pct, max_heating_rate_pct, avg_blower_cfm,
+              max_blower_cfm, sample_count
+            ) SELECT ?, strftime(?, observed_at), AVG(indoor_temp_f), AVG(indoor_humidity_pct),
+              AVG(outdoor_temp_f), AVG(cooling_rate_pct), MAX(cooling_rate_pct),
+              AVG(heating_rate_pct), MAX(heating_rate_pct), AVG(blower_cfm),
+              MAX(blower_cfm), COUNT(*)
+            FROM hvac_readings GROUP BY strftime(?, observed_at)""", (resolution, fmt, fmt))
+        for resolution, days in (("5m", 30), ("hour", 183), ("day", 548)):
+            conn.execute("DELETE FROM hvac_rollups WHERE resolution=? AND bucket_start < ?", (resolution, iso(now()-timedelta(days=days))))
+        conn.execute("UPDATE hvac_readings SET raw_json=NULL WHERE observed_at < ?", (iso(now()-timedelta(days=30)),))
+        conn.execute("DELETE FROM hvac_readings WHERE observed_at < ?", (iso(now()-timedelta(days=7)),))

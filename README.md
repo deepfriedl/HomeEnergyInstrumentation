@@ -20,7 +20,7 @@ All persistent state is in `data/home-energy.sqlite3`. To make a consistent manu
 docker compose exec home-energy python -c "import sqlite3; source=sqlite3.connect('/app/data/home-energy.sqlite3'); target=sqlite3.connect('/app/data/home-energy-backup-$(date +%F).sqlite3'); source.backup(target)"
 ```
 
-Copy the generated file off the server if you want a second copy. The application keeps raw device responses for 30 days; normalized and rolled-up measurements use the configured retention schedule.
+Copy the generated file off the server if you want a second copy. Minute samples are retained for seven days, then consolidated into five-minute data for 30 days, hourly data for six months, and daily data for 18 months. Raw device responses are retained with the minute samples.
 
 ## Development
 
