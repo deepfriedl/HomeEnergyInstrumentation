@@ -9,6 +9,7 @@ services:
       ENERGY_DATA_DIR: /app/data
       ENERGY_INITIAL_PASSWORD: ${ENERGY_INITIAL_PASSWORD:?Set this in .env before first start}
       ENERGY_SESSION_SECRET: ${ENERGY_SESSION_SECRET:?Set this in .env}
+      ENERGY_LENNOX_HOST: ${ENERGY_LENNOX_HOST:-}
     volumes:
       - ./data:/app/data
       - ./config:/app/config
