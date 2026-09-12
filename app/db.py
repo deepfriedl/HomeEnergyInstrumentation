@@ -88,6 +88,21 @@ def initialize():
           UNIQUE(resolution, bucket_start)
         );
         CREATE INDEX IF NOT EXISTS hvac_rollups_range ON hvac_rollups(resolution, bucket_start);
+        CREATE TABLE IF NOT EXISTS weather_readings (
+          id INTEGER PRIMARY KEY, observed_at TEXT NOT NULL UNIQUE,
+          station_id TEXT NOT NULL, source_observed_at TEXT,
+          temperature_f REAL, humidity_pct REAL, dewpoint_f REAL,
+          wind_mph REAL, wind_direction_degrees REAL, precipitation_last_hour_in REAL,
+          conditions TEXT, raw_json TEXT, error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS weather_readings_time ON weather_readings(observed_at);
+        CREATE TABLE IF NOT EXISTS weather_rollups (
+          id INTEGER PRIMARY KEY, resolution TEXT NOT NULL, bucket_start TEXT NOT NULL,
+          avg_temperature_f REAL, avg_humidity_pct REAL, avg_dewpoint_f REAL,
+          avg_wind_mph REAL, total_precipitation_in REAL, sample_count INTEGER NOT NULL,
+          UNIQUE(resolution, bucket_start)
+        );
+        CREATE INDEX IF NOT EXISTS weather_rollups_range ON weather_rollups(resolution, bucket_start);
         """)
         if not conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
             password = os.getenv("ENERGY_INITIAL_PASSWORD")
@@ -182,6 +197,26 @@ def save_hvac_reading(snapshot=None, error=None, observed_at=None):
         ))
 
 
+def save_weather_reading(snapshot=None, station_id=None, error=None, observed_at=None):
+    """Store one normalized NWS observation and its source payload."""
+    snapshot = snapshot or {}
+    station_id = snapshot.get("station_id") or station_id
+    if not station_id:
+        return
+    with connection() as conn:
+        conn.execute("""INSERT OR IGNORE INTO weather_readings(
+          observed_at, station_id, source_observed_at, temperature_f, humidity_pct,
+          dewpoint_f, wind_mph, wind_direction_degrees, precipitation_last_hour_in,
+          conditions, raw_json, error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+            observed_at or iso(), station_id, snapshot.get("source_observed_at"),
+            snapshot.get("temperature_f"), snapshot.get("humidity_pct"), snapshot.get("dewpoint_f"),
+            snapshot.get("wind_mph"), snapshot.get("wind_direction_degrees"),
+            snapshot.get("precipitation_last_hour_in"), snapshot.get("conditions"),
+            json.dumps(snapshot.get("raw")) if snapshot.get("raw") else None, error,
+        ))
+
+
 RANGES = {"24h": (24, "raw"), "7d": (168, "raw"), "30d": (720, "5m"), "6m": (4320, "hour"), "12m": (8760, "day"), "18m": (13152, "day")}
 
 
@@ -239,6 +274,12 @@ def hvac_latest():
     return dict(row) if row else None
 
 
+def weather_latest():
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM weather_readings ORDER BY observed_at DESC LIMIT 1").fetchone()
+    return dict(row) if row else None
+
+
 def hvac_series(range_key="24h"):
     """Return normalized S40 telemetry at the same retention resolution as plug data."""
     hours, resolution = RANGES.get(range_key, RANGES["24h"])
@@ -263,6 +304,31 @@ def hvac_series(range_key="24h"):
               NULL AS error FROM hvac_rollups WHERE resolution=? AND bucket_start >= ?
               ORDER BY bucket_start""", (resolution, cutoff)).fetchall()
     return [dict(row) for row in rows]
+
+
+def climate_series(range_key="24h"):
+    """HVAC series with the latest independent station observation carried forward."""
+    rows = hvac_series(range_key)
+    hours, resolution = RANGES.get(range_key, RANGES["24h"])
+    cutoff = iso(now() - timedelta(hours=hours))
+    with connection() as conn:
+        if resolution == "raw":
+            weather_rows = conn.execute("SELECT observed_at, temperature_f, humidity_pct, dewpoint_f FROM weather_readings WHERE observed_at >= ? ORDER BY observed_at", (cutoff,)).fetchall()
+        else:
+            weather_rows = conn.execute("""SELECT bucket_start AS observed_at, avg_temperature_f AS temperature_f,
+              avg_humidity_pct AS humidity_pct, avg_dewpoint_f AS dewpoint_f FROM weather_rollups
+              WHERE resolution=? AND bucket_start >= ? ORDER BY bucket_start""", (resolution, cutoff)).fetchall()
+    weather_rows = [dict(row) for row in weather_rows]
+    index = 0
+    current = None
+    for row in rows:
+        while index < len(weather_rows) and weather_rows[index]["observed_at"] <= row["observed_at"]:
+            current = weather_rows[index]
+            index += 1
+        row["nws_temp_f"] = current["temperature_f"] if current else None
+        row["nws_humidity_pct"] = current["humidity_pct"] if current else None
+        row["nws_dewpoint_f"] = current["dewpoint_f"] if current else None
+    return rows
 
 
 def cleanup_and_rollup():
@@ -292,3 +358,14 @@ def cleanup_and_rollup():
             conn.execute("DELETE FROM hvac_rollups WHERE resolution=? AND bucket_start < ?", (resolution, iso(now()-timedelta(days=days))))
         conn.execute("UPDATE hvac_readings SET raw_json=NULL WHERE observed_at < ?", (iso(now()-timedelta(days=30)),))
         conn.execute("DELETE FROM hvac_readings WHERE observed_at < ?", (iso(now()-timedelta(days=7)),))
+        for resolution, fmt in (("5m", "%Y-%m-%dT%H:%M:00+00:00"), ("hour", "%Y-%m-%dT%H:00:00+00:00"), ("day", "%Y-%m-%dT00:00:00+00:00")):
+            conn.execute(f"""INSERT OR REPLACE INTO weather_rollups(
+              resolution, bucket_start, avg_temperature_f, avg_humidity_pct,
+              avg_dewpoint_f, avg_wind_mph, total_precipitation_in, sample_count
+            ) SELECT ?, strftime(?, observed_at), AVG(temperature_f), AVG(humidity_pct),
+              AVG(dewpoint_f), AVG(wind_mph), SUM(precipitation_last_hour_in), COUNT(*)
+            FROM weather_readings GROUP BY strftime(?, observed_at)""", (resolution, fmt, fmt))
+        for resolution, days in (("5m", 30), ("hour", 183), ("day", 548)):
+            conn.execute("DELETE FROM weather_rollups WHERE resolution=? AND bucket_start < ?", (resolution, iso(now()-timedelta(days=days))))
+        conn.execute("UPDATE weather_readings SET raw_json=NULL WHERE observed_at < ?", (iso(now()-timedelta(days=30)),))
+        conn.execute("DELETE FROM weather_readings WHERE observed_at < ?", (iso(now()-timedelta(days=7)),))

@@ -59,3 +59,12 @@ docker compose exec home-energy python -m app.lennox_discovery
 The command changes no thermostat setting. Review `data/lennox-discovery.json`
 locally before sharing any part of it; it is ignored by Git along with the rest
 of `data/`.
+
+## Optional NWS weather observation
+
+Set `ENERGY_NWS_STATION` in the private `.env` file to an NWS station identifier,
+then rebuild with `docker compose up -d --build`. The app reads that station's
+latest observation every ten minutes and uses the same retention tiers as the
+other telemetry. It is read-only and does not expose the station setting in the
+web interface. Use an independent station to compare ambient conditions with
+the thermostat's reported outdoor value.

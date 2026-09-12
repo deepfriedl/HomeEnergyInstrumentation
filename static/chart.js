@@ -25,7 +25,7 @@ function chartFrame(canvas, points, values, unit, forceZero=false) {
   const ctx=canvas.getContext('2d'), w=canvas.width=canvas.clientWidth*devicePixelRatio, h=canvas.height=canvas.clientHeight*devicePixelRatio;
   ctx.scale(devicePixelRatio,devicePixelRatio);const W=canvas.clientWidth,H=canvas.clientHeight,p=32,bottom=28;
   if(!values.length){ctx.fillStyle='#91a0ae';ctx.font='14px system-ui';ctx.fillText('No measurements for this period.',p,H/2);return null}
-  const chartHeight=H-p-bottom,min=forceZero?0:Math.min(...values),max=Math.max(...values)*1.05||1;
+  const chartHeight=H-p-bottom;let min=forceZero?0:Math.min(...values),max=Math.max(...values)*1.05||1;if(max===min){min-=1;max+=1}
   ctx.strokeStyle='#283442';ctx.lineWidth=1;for(let i=0;i<4;i++){const y=p+i*chartHeight/3;ctx.beginPath();ctx.moveTo(p,y);ctx.lineTo(W-p,y);ctx.stroke();ctx.fillStyle='#91a0ae';ctx.font='11px system-ui';ctx.fillText((max-(max-min)*i/3).toFixed(unit==='°F'?1:0)+' '+unit,2,y+4)}
   const labelDate=(raw)=>{const date=new Date(raw),span=new Date(points.at(-1).observed_at)-new Date(points[0].observed_at);return span<=172800000?date.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):span<=3456000000?date.toLocaleDateString([],{month:'short',day:'numeric'}):date.toLocaleDateString([],{month:'short',year:'2-digit'})};
   ctx.textAlign='center';for(let i=0;i<5;i++){const index=Math.round(i*(points.length-1)/4),X=p+i*(W-2*p)/4;ctx.strokeStyle='#283442';ctx.beginPath();ctx.moveTo(X,H-bottom);ctx.lineTo(X,H-bottom+4);ctx.stroke();ctx.fillStyle='#91a0ae';ctx.font='11px system-ui';ctx.fillText(labelDate(points[index].observed_at),X,H-6)}ctx.textAlign='start';
