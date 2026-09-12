@@ -277,7 +277,20 @@ def hvac_latest():
 def weather_latest():
     with connection() as conn:
         row = conn.execute("SELECT * FROM weather_readings ORDER BY observed_at DESC LIMIT 1").fetchone()
-    return dict(row) if row else None
+    result = dict(row) if row else None
+    if result:
+        result["wind_direction"] = compass_direction(result.get("wind_direction_degrees"))
+    return result
+
+
+def compass_direction(degrees):
+    """Convert the NWS wind bearing to a compact 16-point compass direction."""
+    try:
+        degrees = float(degrees) % 360
+    except (TypeError, ValueError):
+        return None
+    points = ("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW")
+    return points[round(degrees / 22.5) % len(points)]
 
 
 def weather_series(range_key="24h"):
