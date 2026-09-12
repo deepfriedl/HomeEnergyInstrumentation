@@ -25,13 +25,18 @@ def import_file(path: Path) -> tuple[int, int]:
                     raise ValueError(f"unconfigured device IP {record['ip']}")
                 status = record.get("status")
                 conn.execute("""INSERT OR IGNORE INTO readings(device_id, observed_at, watts, voltage, current, total_kwh, raw_json, error)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (
+                    SELECT ?, ?, ?, ?, ?, ?, ?, ?
+                    WHERE NOT EXISTS (
+                      SELECT 1 FROM readings
+                      WHERE device_id=? AND ABS(strftime('%s', observed_at) - strftime('%s', ?)) < 30
+                    )""", (
                     device["id"], record["timestamp"],
                     status.get("apower") if status else None,
                     status.get("voltage") if status else None,
                     status.get("current") if status else None,
                     ((status.get("aenergy") or {}).get("total", 0) / 1000) if status else None,
                     json.dumps(status) if status else None, str(record.get("error")) if "error" in record else None,
+                    device["id"], record["timestamp"],
                 ))
                 imported += 1
             except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
