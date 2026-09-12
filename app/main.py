@@ -97,6 +97,15 @@ def hvac_detail(request: Request, range: str = "24h"):
     return templates.TemplateResponse(request, "hvac.html", {"hvac": db.hvac_latest(), "weather": db.weather_latest(), "series": db.climate_series(range), "range": range, "ranges": db.RANGES})
 
 
+@app.get("/weather", response_class=HTMLResponse)
+def weather_detail(request: Request, range: str = "24h"):
+    redirect = require_login(request)
+    if redirect: return redirect
+    if range not in db.RANGES:
+        return RedirectResponse("/weather?range=24h", status_code=303)
+    return templates.TemplateResponse(request, "weather.html", {"weather": db.weather_latest(), "series": db.weather_series(range), "range": range, "ranges": db.RANGES})
+
+
 @app.get("/devices/{device_id}", response_class=HTMLResponse)
 def device_detail(request: Request, device_id: int, range: str = "24h"):
     redirect = require_login(request)

@@ -280,6 +280,24 @@ def weather_latest():
     return dict(row) if row else None
 
 
+def weather_series(range_key="24h"):
+    """Return normalized NWS station observations at the selected retention tier."""
+    hours, resolution = RANGES.get(range_key, RANGES["24h"])
+    cutoff = iso(now() - timedelta(hours=hours))
+    with connection() as conn:
+        if resolution == "raw":
+            rows = conn.execute("""SELECT observed_at, temperature_f, humidity_pct, dewpoint_f,
+              wind_mph, precipitation_last_hour_in, conditions, error
+              FROM weather_readings WHERE observed_at >= ? ORDER BY observed_at""", (cutoff,)).fetchall()
+        else:
+            rows = conn.execute("""SELECT bucket_start AS observed_at, avg_temperature_f AS temperature_f,
+              avg_humidity_pct AS humidity_pct, avg_dewpoint_f AS dewpoint_f,
+              avg_wind_mph AS wind_mph, total_precipitation_in AS precipitation_last_hour_in,
+              NULL AS conditions, NULL AS error FROM weather_rollups
+              WHERE resolution=? AND bucket_start >= ? ORDER BY bucket_start""", (resolution, cutoff)).fetchall()
+    return [dict(row) for row in rows]
+
+
 def hvac_series(range_key="24h"):
     """Return normalized S40 telemetry at the same retention resolution as plug data."""
     hours, resolution = RANGES.get(range_key, RANGES["24h"])
@@ -363,7 +381,7 @@ def cleanup_and_rollup():
               resolution, bucket_start, avg_temperature_f, avg_humidity_pct,
               avg_dewpoint_f, avg_wind_mph, total_precipitation_in, sample_count
             ) SELECT ?, strftime(?, observed_at), AVG(temperature_f), AVG(humidity_pct),
-              AVG(dewpoint_f), AVG(wind_mph), SUM(precipitation_last_hour_in), COUNT(*)
+              AVG(dewpoint_f), AVG(wind_mph), AVG(precipitation_last_hour_in), COUNT(*)
             FROM weather_readings GROUP BY strftime(?, observed_at)""", (resolution, fmt, fmt))
         for resolution, days in (("5m", 30), ("hour", 183), ("day", 548)):
             conn.execute("DELETE FROM weather_rollups WHERE resolution=? AND bucket_start < ?", (resolution, iso(now()-timedelta(days=days))))

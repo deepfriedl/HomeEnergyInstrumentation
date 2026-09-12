@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="title-row"><div><p class="eyebrow">WEATHER</p><h1>Outdoor conditions</h1><p class="muted">Independent National Weather Service station observations.</p></div><a class="button" href="/?range={{range}}">Back to overview</a></div>
+<section class="metrics weather-metrics">
+  <article><span>Ambient temperature</span><strong>{% if weather and weather.temperature_f is not none %}{{'%.0f'|format(weather.temperature_f)}}°{% else %}—{% endif %}</strong><small>{% if weather %}{{weather.conditions or 'Observation available'}}{% else %}No station configured{% endif %}</small></article>
+  <article><span>Relative humidity</span><strong>{% if weather and weather.humidity_pct is not none %}{{'%.0f'|format(weather.humidity_pct)}}%{% else %}—{% endif %}</strong><small>{% if weather and weather.dewpoint_f is not none %}Dew point {{'%.0f'|format(weather.dewpoint_f)}}°{% else %}Dew point unavailable{% endif %}</small></article>
+  <article><span>Wind speed</span><strong>{% if weather and weather.wind_mph is not none %}{{'%.0f'|format(weather.wind_mph)}} mph{% else %}—{% endif %}</strong><small>{% if weather and weather.wind_direction_degrees is not none %}{{'%.0f'|format(weather.wind_direction_degrees)}}° direction{% else %}Direction unavailable{% endif %}</small></article>
+  <article><span>Last weather update</span><strong class="timestamp">{% if weather and weather.observed_at %}{{weather.observed_at}}{% else %}—{% endif %}</strong><small>NWS observations are collected every 10 minutes</small></article>
+</section>
+<p class="ranges">{% for key in ranges %}<a class="{% if range == key %}active{% endif %}" href="/weather?range={{key}}">{{key}}</a>{% endfor %}</p>
+<section class="panel"><h2>Temperature and dew point · {{range}}</h2><canvas id="weather-temperature"></canvas></section>
+<section class="panel"><h2>Relative humidity · {{range}}</h2><canvas id="weather-humidity"></canvas></section>
+<section class="panel"><h2>Wind speed · {{range}}</h2><canvas id="weather-wind"></canvas></section>
+<section class="panel"><h2>Precipitation reported in the prior hour · {{range}}</h2><canvas id="weather-precipitation"></canvas><p class="muted">This is the NWS station’s reported amount for the preceding hour, not a running total calculated by the app.</p></section>
+<script>const weatherReadings={{series|tojson}};</script><script src="/static/chart.js"></script>
+<script>drawMultiChart(document.getElementById('weather-temperature'),weatherReadings,[['temperature_f','#ffb86b','Ambient'],['dewpoint_f','#64d8cb','Dew point']],'°F');drawChart(document.getElementById('weather-humidity'),weatherReadings,'humidity_pct','#bb9cff','%');drawChart(document.getElementById('weather-wind'),weatherReadings,'wind_mph','#75b8ff','mph');drawChart(document.getElementById('weather-precipitation'),weatherReadings,'precipitation_last_hour_in','#64d8cb','in');</script>
+{% endblock %}
