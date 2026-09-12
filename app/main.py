@@ -63,6 +63,8 @@ def logout(request: Request):
 def dashboard(request: Request, range: str = "24h"):
     redirect = require_login(request)
     if redirect: return redirect
+    if range not in db.RANGES:
+        return RedirectResponse("/?range=24h", status_code=303)
     devices, series = db.overview(range)
     return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "range": range, "ranges": db.RANGES})
 
@@ -71,6 +73,8 @@ def dashboard(request: Request, range: str = "24h"):
 def device_detail(request: Request, device_id: int, range: str = "24h"):
     redirect = require_login(request)
     if redirect: return redirect
+    if range not in db.RANGES:
+        return RedirectResponse(f"/devices/{device_id}?range=24h", status_code=303)
     device = next((item for item in db.devices() if item["id"] == device_id), None)
     if not device: return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse(request, "device.html", {"device": device, "series": db.device_series(device_id, range), "range": range, "ranges": db.RANGES})

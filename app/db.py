@@ -111,7 +111,7 @@ def save_reading(device_id, watts=None, voltage=None, current=None, total_kwh=No
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (device_id, observed_at or iso(), watts, voltage, current, total_kwh, json.dumps(payload) if payload else None, error))
 
 
-RANGES = {"24h": (24, "raw"), "7d": (168, "raw"), "30d": (720, "5m"), "6mo": (4320, "hour"), "18mo": (13152, "day")}
+RANGES = {"24h": (24, "raw"), "7d": (168, "raw"), "30d": (720, "5m"), "6m": (4320, "hour"), "12m": (8760, "day"), "18m": (13152, "day")}
 
 
 def overview(range_key="24h"):
