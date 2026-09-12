@@ -232,6 +232,39 @@ def comparison_series(range_key="24h"):
     return list(grouped.values())
 
 
+def hvac_latest():
+    """Return the most recent Lennox state, including a collection error if present."""
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM hvac_readings ORDER BY observed_at DESC LIMIT 1").fetchone()
+    return dict(row) if row else None
+
+
+def hvac_series(range_key="24h"):
+    """Return normalized S40 telemetry at the same retention resolution as plug data."""
+    hours, resolution = RANGES.get(range_key, RANGES["24h"])
+    cutoff = iso(now() - timedelta(hours=hours))
+    with connection() as conn:
+        if resolution == "raw":
+            rows = conn.execute("""SELECT observed_at, indoor_temp_f, indoor_humidity_pct,
+              outdoor_temp_f, cooling_rate_pct, heating_rate_pct, blower_cfm,
+              system_mode, operation, fan_running, aux_active, defrost_active,
+              alert_count, error FROM hvac_readings WHERE observed_at >= ?
+              ORDER BY observed_at""", (cutoff,)).fetchall()
+        else:
+            rows = conn.execute("""SELECT bucket_start AS observed_at,
+              avg_indoor_temp_f AS indoor_temp_f,
+              avg_indoor_humidity_pct AS indoor_humidity_pct,
+              avg_outdoor_temp_f AS outdoor_temp_f,
+              avg_cooling_rate_pct AS cooling_rate_pct,
+              avg_heating_rate_pct AS heating_rate_pct,
+              avg_blower_cfm AS blower_cfm,
+              NULL AS system_mode, NULL AS operation, NULL AS fan_running,
+              NULL AS aux_active, NULL AS defrost_active, NULL AS alert_count,
+              NULL AS error FROM hvac_rollups WHERE resolution=? AND bucket_start >= ?
+              ORDER BY bucket_start""", (resolution, cutoff)).fetchall()
+    return [dict(row) for row in rows]
+
+
 def cleanup_and_rollup():
     """Create 5-minute/hourly/daily aggregates and remove expired raw payloads/minute readings."""
     with connection() as conn:

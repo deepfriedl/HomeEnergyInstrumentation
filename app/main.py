@@ -82,7 +82,16 @@ def dashboard(request: Request, range: str = "24h"):
         return RedirectResponse("/?range=24h", status_code=303)
     devices, series = db.overview(range)
     comparison = db.comparison_series(range)
-    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "comparison": comparison, "range": range, "ranges": db.RANGES})
+    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "comparison": comparison, "hvac": db.hvac_latest(), "range": range, "ranges": db.RANGES})
+
+
+@app.get("/hvac", response_class=HTMLResponse)
+def hvac_detail(request: Request, range: str = "24h"):
+    redirect = require_login(request)
+    if redirect: return redirect
+    if range not in db.RANGES:
+        return RedirectResponse("/hvac?range=24h", status_code=303)
+    return templates.TemplateResponse(request, "hvac.html", {"hvac": db.hvac_latest(), "series": db.hvac_series(range), "range": range, "ranges": db.RANGES})
 
 
 @app.get("/devices/{device_id}", response_class=HTMLResponse)
