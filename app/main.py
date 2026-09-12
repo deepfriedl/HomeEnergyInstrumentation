@@ -36,7 +36,14 @@ app = FastAPI(title="Home Energy", lifespan=lifespan)
 session_secret = os.getenv("ENERGY_SESSION_SECRET")
 if not session_secret:
     raise RuntimeError("Set ENERGY_SESSION_SECRET in .env before starting the application.")
-app.add_middleware(SessionMiddleware, secret_key=session_secret, max_age=None, https_only=False, same_site="lax")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=session_secret,
+    session_cookie="home_energy_session",
+    max_age=None,
+    https_only=False,
+    same_site="lax",
+)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
