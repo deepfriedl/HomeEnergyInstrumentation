@@ -165,6 +165,26 @@ def device_series(device_id, range_key="24h"):
         return [dict(row) for row in rows]
 
 
+def comparison_series(range_key="24h"):
+    """Return per-device power series for the overview comparison chart."""
+    hours, resolution = RANGES.get(range_key, RANGES["24h"])
+    cutoff = iso(now() - timedelta(hours=hours))
+    with connection() as conn:
+        if resolution == "raw":
+            rows = conn.execute("""SELECT d.id, d.name, d.color, r.observed_at, r.watts
+                FROM readings r JOIN devices d ON d.id=r.device_id
+                WHERE r.observed_at>=? AND r.watts IS NOT NULL ORDER BY d.id, r.observed_at""", (cutoff,))
+        else:
+            rows = conn.execute("""SELECT d.id, d.name, d.color, r.bucket_start AS observed_at, r.avg_watts AS watts
+                FROM rollups r JOIN devices d ON d.id=r.device_id
+                WHERE r.resolution=? AND r.bucket_start>=? AND r.avg_watts IS NOT NULL ORDER BY d.id, r.bucket_start""", (resolution, cutoff))
+        grouped = {}
+        for row in rows:
+            item = grouped.setdefault(row["id"], {"name": row["name"], "color": row["color"], "points": []})
+            item["points"].append({"observed_at": row["observed_at"], "watts": row["watts"]})
+    return list(grouped.values())
+
+
 def cleanup_and_rollup():
     """Create 5-minute/hourly/daily aggregates and remove expired raw payloads/minute readings."""
     with connection() as conn:

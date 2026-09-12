@@ -66,7 +66,8 @@ def dashboard(request: Request, range: str = "24h"):
     if range not in db.RANGES:
         return RedirectResponse("/?range=24h", status_code=303)
     devices, series = db.overview(range)
-    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "range": range, "ranges": db.RANGES})
+    comparison = db.comparison_series(range)
+    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "comparison": comparison, "range": range, "ranges": db.RANGES})
 
 
 @app.get("/devices/{device_id}", response_class=HTMLResponse)
