@@ -15,7 +15,7 @@ from app import db
 
 PORT = 8883
 WAIT_SECONDS = 30
-SENSITIVE_TERMS = ("access", "code", "serial", "device_id", "token", "password", "ssid", "ip", "url", "file", "subtask", "project")
+SENSITIVE_TERMS = ("access", "code", "serial", "device_id", "token", "password", "ssid", "ip", "url", "file", "subtask", "project", "mac")
 
 
 def configured():
@@ -28,7 +28,10 @@ def configured():
 
 def redact(value, key=""):
     """Keep telemetry structure while omitting identifiers, job names, and network details."""
-    if any(term in key.lower() for term in SENSITIVE_TERMS):
+    normalized_key = key.lower()
+    if (any(term in normalized_key for term in SENSITIVE_TERMS)
+            or normalized_key in {"id", "uid", "uuid", "sn"}
+            or normalized_key.endswith(("_id", "_uid", "_uuid"))):
         return "[redacted]"
     if isinstance(value, dict):
         return {name: redact(item, name) for name, item in value.items()}
