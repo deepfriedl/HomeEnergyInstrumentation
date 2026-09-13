@@ -68,3 +68,20 @@ latest observation every ten minutes and uses the same retention tiers as the
 other telemetry. It is read-only and does not expose the station setting in the
 web interface. Use an independent station to compare ambient conditions with
 the thermostat's reported outdoor value.
+
+## Bambu printer discovery
+
+The optional Bambu discovery command makes a read-only subscription to the
+printer's local MQTT status topic. It sends no printer command and does not
+access files or the camera. Set `ENERGY_BAMBU_HOST`, `ENERGY_BAMBU_SERIAL`, and
+`ENERGY_BAMBU_ACCESS_CODE` in the private `.env` file, rebuild, then run:
+
+```sh
+docker compose up -d --build
+docker compose exec home-energy python -m app.bambu_discovery
+```
+
+It saves a scrubbed status sample in `data/bambu-discovery.json` and pins the
+printer's local TLS certificate in `data/bambu-printer.pem`. Both are ignored
+by Git. The scrubbed sample omits network details, the serial number, access
+code, and print/project names.

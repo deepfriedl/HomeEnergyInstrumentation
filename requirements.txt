@@ -4,3 +4,4 @@ jinja2==3.1.6
 itsdangerous==2.2.0
 python-multipart==0.0.20
 lennoxs30api==0.2.24
+paho-mqtt==2.1.0

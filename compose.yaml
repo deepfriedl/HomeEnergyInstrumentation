@@ -12,6 +12,9 @@ services:
       ENERGY_SESSION_SECRET: ${ENERGY_SESSION_SECRET:?Set this in .env}
       ENERGY_LENNOX_HOST: ${ENERGY_LENNOX_HOST:-}
       ENERGY_NWS_STATION: ${ENERGY_NWS_STATION:-}
+      ENERGY_BAMBU_HOST: ${ENERGY_BAMBU_HOST:-}
+      ENERGY_BAMBU_SERIAL: ${ENERGY_BAMBU_SERIAL:-}
+      ENERGY_BAMBU_ACCESS_CODE: ${ENERGY_BAMBU_ACCESS_CODE:-}
     volumes:
       - ./data:/app/data
       - ./config:/app/config
