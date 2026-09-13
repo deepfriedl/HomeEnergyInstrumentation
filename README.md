@@ -85,3 +85,8 @@ It saves a scrubbed status sample in `data/bambu-discovery.json` and pins the
 printer's local TLS certificate in `data/bambu-printer.pem`. Both are ignored
 by Git. The scrubbed sample omits network details, the serial number, access
 code, and print/project names.
+
+With those same private settings present, the app maintains a read-only local
+status subscription and stores printer state, progress, temperatures, fan
+activity, and AMS conditions once per minute. Electrical power remains the
+responsibility of the separate Shelly plug assigned to the printer.

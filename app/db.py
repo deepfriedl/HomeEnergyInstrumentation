@@ -103,6 +103,25 @@ def initialize():
           UNIQUE(resolution, bucket_start)
         );
         CREATE INDEX IF NOT EXISTS weather_rollups_range ON weather_rollups(resolution, bucket_start);
+        CREATE TABLE IF NOT EXISTS bambu_readings (
+          id INTEGER PRIMARY KEY, observed_at TEXT NOT NULL UNIQUE,
+          print_state TEXT, print_percent REAL, remaining_minutes REAL,
+          layer_num REAL, total_layer_num REAL,
+          nozzle_temp_c REAL, nozzle_target_c REAL, bed_temp_c REAL, bed_target_c REAL,
+          cooling_fan_pct REAL, chamber_fan_pct REAL,
+          ams_temperature_c REAL, ams_humidity_index REAL,
+          error_code TEXT, raw_json TEXT, error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS bambu_readings_time ON bambu_readings(observed_at);
+        CREATE TABLE IF NOT EXISTS bambu_rollups (
+          id INTEGER PRIMARY KEY, resolution TEXT NOT NULL, bucket_start TEXT NOT NULL,
+          avg_print_percent REAL, avg_nozzle_temp_c REAL, avg_nozzle_target_c REAL,
+          avg_bed_temp_c REAL, avg_bed_target_c REAL, avg_cooling_fan_pct REAL,
+          avg_chamber_fan_pct REAL, avg_ams_temperature_c REAL,
+          sample_count INTEGER NOT NULL,
+          UNIQUE(resolution, bucket_start)
+        );
+        CREATE INDEX IF NOT EXISTS bambu_rollups_range ON bambu_rollups(resolution, bucket_start);
         """)
         if not conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
             password = os.getenv("ENERGY_INITIAL_PASSWORD")
@@ -217,6 +236,25 @@ def save_weather_reading(snapshot=None, station_id=None, error=None, observed_at
         ))
 
 
+def save_bambu_reading(snapshot=None, error=None, observed_at=None):
+    """Store a normalized, read-only Bambu printer state snapshot."""
+    snapshot = snapshot or {}
+    with connection() as conn:
+        conn.execute("""INSERT OR IGNORE INTO bambu_readings(
+          observed_at, print_state, print_percent, remaining_minutes, layer_num,
+          total_layer_num, nozzle_temp_c, nozzle_target_c, bed_temp_c, bed_target_c,
+          cooling_fan_pct, chamber_fan_pct, ams_temperature_c, ams_humidity_index,
+          error_code, raw_json, error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+            observed_at or iso(), snapshot.get("print_state"), snapshot.get("print_percent"),
+            snapshot.get("remaining_minutes"), snapshot.get("layer_num"), snapshot.get("total_layer_num"),
+            snapshot.get("nozzle_temp_c"), snapshot.get("nozzle_target_c"), snapshot.get("bed_temp_c"),
+            snapshot.get("bed_target_c"), snapshot.get("cooling_fan_pct"), snapshot.get("chamber_fan_pct"),
+            snapshot.get("ams_temperature_c"), snapshot.get("ams_humidity_index"), snapshot.get("error_code"),
+            json.dumps(snapshot) if snapshot else None, error,
+        ))
+
+
 RANGES = {"24h": (24, "raw"), "7d": (168, "raw"), "30d": (720, "5m"), "6m": (4320, "hour"), "12m": (8760, "day"), "18m": (13152, "day")}
 
 
@@ -283,6 +321,12 @@ def weather_latest():
     return result
 
 
+def bambu_latest():
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM bambu_readings ORDER BY observed_at DESC LIMIT 1").fetchone()
+    return dict(row) if row else None
+
+
 def compass_direction(degrees):
     """Convert the NWS wind bearing to a compact 16-point compass direction."""
     try:
@@ -308,6 +352,28 @@ def weather_series(range_key="24h"):
               avg_wind_mph AS wind_mph, total_precipitation_in AS precipitation_last_hour_in,
               NULL AS conditions, NULL AS error FROM weather_rollups
               WHERE resolution=? AND bucket_start >= ? ORDER BY bucket_start""", (resolution, cutoff)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def bambu_series(range_key="24h"):
+    """Return Bambu telemetry at the selected retention tier."""
+    hours, resolution = RANGES.get(range_key, RANGES["24h"])
+    cutoff = iso(now() - timedelta(hours=hours))
+    with connection() as conn:
+        if resolution == "raw":
+            rows = conn.execute("""SELECT observed_at, print_state, print_percent, remaining_minutes,
+              layer_num, total_layer_num, nozzle_temp_c, nozzle_target_c, bed_temp_c, bed_target_c,
+              cooling_fan_pct, chamber_fan_pct, ams_temperature_c, ams_humidity_index,
+              error_code, error FROM bambu_readings WHERE observed_at >= ? ORDER BY observed_at""", (cutoff,)).fetchall()
+        else:
+            rows = conn.execute("""SELECT bucket_start AS observed_at, NULL AS print_state,
+              avg_print_percent AS print_percent, NULL AS remaining_minutes, NULL AS layer_num,
+              NULL AS total_layer_num, avg_nozzle_temp_c AS nozzle_temp_c,
+              avg_nozzle_target_c AS nozzle_target_c, avg_bed_temp_c AS bed_temp_c,
+              avg_bed_target_c AS bed_target_c, avg_cooling_fan_pct AS cooling_fan_pct,
+              avg_chamber_fan_pct AS chamber_fan_pct, avg_ams_temperature_c AS ams_temperature_c,
+              NULL AS ams_humidity_index, NULL AS error_code, NULL AS error
+              FROM bambu_rollups WHERE resolution=? AND bucket_start >= ? ORDER BY bucket_start""", (resolution, cutoff)).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -400,3 +466,16 @@ def cleanup_and_rollup():
             conn.execute("DELETE FROM weather_rollups WHERE resolution=? AND bucket_start < ?", (resolution, iso(now()-timedelta(days=days))))
         conn.execute("UPDATE weather_readings SET raw_json=NULL WHERE observed_at < ?", (iso(now()-timedelta(days=30)),))
         conn.execute("DELETE FROM weather_readings WHERE observed_at < ?", (iso(now()-timedelta(days=7)),))
+        for resolution, fmt in (("5m", "%Y-%m-%dT%H:%M:00+00:00"), ("hour", "%Y-%m-%dT%H:00:00+00:00"), ("day", "%Y-%m-%dT00:00:00+00:00")):
+            conn.execute(f"""INSERT OR REPLACE INTO bambu_rollups(
+              resolution, bucket_start, avg_print_percent, avg_nozzle_temp_c,
+              avg_nozzle_target_c, avg_bed_temp_c, avg_bed_target_c,
+              avg_cooling_fan_pct, avg_chamber_fan_pct, avg_ams_temperature_c, sample_count
+            ) SELECT ?, strftime(?, observed_at), AVG(print_percent), AVG(nozzle_temp_c),
+              AVG(nozzle_target_c), AVG(bed_temp_c), AVG(bed_target_c),
+              AVG(cooling_fan_pct), AVG(chamber_fan_pct), AVG(ams_temperature_c), COUNT(*)
+            FROM bambu_readings GROUP BY strftime(?, observed_at)""", (resolution, fmt, fmt))
+        for resolution, days in (("5m", 30), ("hour", 183), ("day", 548)):
+            conn.execute("DELETE FROM bambu_rollups WHERE resolution=? AND bucket_start < ?", (resolution, iso(now()-timedelta(days=days))))
+        conn.execute("UPDATE bambu_readings SET raw_json=NULL WHERE observed_at < ?", (iso(now()-timedelta(days=30)),))
+        conn.execute("DELETE FROM bambu_readings WHERE observed_at < ?", (iso(now()-timedelta(days=7)),))

@@ -15,7 +15,7 @@ from app import db
 
 PORT = 8883
 WAIT_SECONDS = 30
-SENSITIVE_TERMS = ("access", "code", "serial", "device_id", "token", "password", "ssid", "ip", "url", "file", "subtask", "project", "mac")
+SENSITIVE_TERMS = ("access", "serial", "device_id", "token", "password", "ssid", "ip", "url", "file", "subtask", "project", "mac")
 
 
 def configured():

@@ -11,15 +11,17 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app import db
 from app.collector import collect_once
+from app.bambu import BambuCollector
 from app.lennox import LennoxCollector
 from app.weather import WeatherCollector
 
 
-async def collector_loop(lennox_collector, weather_collector):
+async def collector_loop(lennox_collector, weather_collector, bambu_collector):
     while True:
         await collect_once()
         await lennox_collector.collect_once()
         await weather_collector.collect_once()
+        await bambu_collector.collect_once()
         db.cleanup_and_rollup()
         await asyncio.sleep(60)
 
@@ -29,10 +31,12 @@ async def lifespan(app):
     db.initialize()
     lennox_collector = LennoxCollector()
     weather_collector = WeatherCollector()
-    task = asyncio.create_task(collector_loop(lennox_collector, weather_collector))
+    bambu_collector = BambuCollector()
+    task = asyncio.create_task(collector_loop(lennox_collector, weather_collector, bambu_collector))
     yield
     task.cancel()
     await lennox_collector.shutdown()
+    await bambu_collector.shutdown()
 
 
 app = FastAPI(title="Home Energy", lifespan=lifespan)
@@ -85,7 +89,7 @@ def dashboard(request: Request, range: str = "24h"):
         return RedirectResponse("/?range=24h", status_code=303)
     devices, series = db.overview(range)
     comparison = db.comparison_series(range)
-    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "comparison": comparison, "hvac": db.hvac_latest(), "weather": db.weather_latest(), "range": range, "ranges": db.RANGES})
+    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "comparison": comparison, "hvac": db.hvac_latest(), "weather": db.weather_latest(), "bambu": db.bambu_latest(), "range": range, "ranges": db.RANGES})
 
 
 @app.get("/hvac", response_class=HTMLResponse)
@@ -104,6 +108,15 @@ def weather_detail(request: Request, range: str = "24h"):
     if range not in db.RANGES:
         return RedirectResponse("/weather?range=24h", status_code=303)
     return templates.TemplateResponse(request, "weather.html", {"weather": db.weather_latest(), "series": db.weather_series(range), "range": range, "ranges": db.RANGES})
+
+
+@app.get("/printer", response_class=HTMLResponse)
+def printer_detail(request: Request, range: str = "24h"):
+    redirect = require_login(request)
+    if redirect: return redirect
+    if range not in db.RANGES:
+        return RedirectResponse("/printer?range=24h", status_code=303)
+    return templates.TemplateResponse(request, "printer.html", {"printer": db.bambu_latest(), "series": db.bambu_series(range), "range": range, "ranges": db.RANGES})
 
 
 @app.get("/devices/{device_id}", response_class=HTMLResponse)
