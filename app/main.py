@@ -89,7 +89,8 @@ def dashboard(request: Request, range: str = "24h"):
         return RedirectResponse("/?range=24h", status_code=303)
     devices, series = db.overview(range)
     comparison = db.comparison_series(range)
-    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "comparison": comparison, "hvac": db.hvac_latest(), "weather": db.weather_latest(), "bambu": db.bambu_latest(), "range": range, "ranges": db.RANGES})
+    bambu_power_device = db.bambu_power_device()
+    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "comparison": comparison, "hvac": db.hvac_latest(), "weather": db.weather_latest(), "bambu": db.bambu_latest(), "bambu_power_device": bambu_power_device, "range": range, "ranges": db.RANGES})
 
 
 @app.get("/hvac", response_class=HTMLResponse)
@@ -116,7 +117,8 @@ def printer_detail(request: Request, range: str = "24h"):
     if redirect: return redirect
     if range not in db.RANGES:
         return RedirectResponse("/printer?range=24h", status_code=303)
-    return templates.TemplateResponse(request, "printer.html", {"printer": db.bambu_latest(), "series": db.bambu_series(range), "range": range, "ranges": db.RANGES})
+    power_device = db.bambu_power_device()
+    return templates.TemplateResponse(request, "printer.html", {"printer": db.bambu_latest(), "series": db.bambu_series(range), "power_device": power_device, "power_series": db.device_series(power_device["id"], range) if power_device else [], "range": range, "ranges": db.RANGES})
 
 
 @app.get("/devices/{device_id}", response_class=HTMLResponse)

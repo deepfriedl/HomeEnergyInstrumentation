@@ -15,6 +15,7 @@ services:
       ENERGY_BAMBU_HOST: ${ENERGY_BAMBU_HOST:-}
       ENERGY_BAMBU_SERIAL: ${ENERGY_BAMBU_SERIAL:-}
       ENERGY_BAMBU_ACCESS_CODE: ${ENERGY_BAMBU_ACCESS_CODE:-}
+      ENERGY_BAMBU_POWER_DEVICE_NAME: ${ENERGY_BAMBU_POWER_DEVICE_NAME:-}
     volumes:
       - ./data:/app/data
       - ./config:/app/config

@@ -327,6 +327,19 @@ def bambu_latest():
     return dict(row) if row else None
 
 
+def bambu_power_device():
+    """Return the privately configured Shelly device that powers the Bambu printer."""
+    name = os.getenv("ENERGY_BAMBU_POWER_DEVICE_NAME", "").strip()
+    if not name:
+        return None
+    with connection() as conn:
+        row = conn.execute("""SELECT d.id, d.name, d.ip_address, d.color, d.enabled, d.created_at,
+          r.observed_at, r.watts, r.voltage, r.current, r.total_kwh, r.error FROM devices d
+          LEFT JOIN readings r ON r.id=(SELECT id FROM readings WHERE device_id=d.id ORDER BY observed_at DESC LIMIT 1)
+          WHERE d.name=?""", (name,)).fetchone()
+    return dict(row) if row else None
+
+
 def compass_direction(degrees):
     """Convert the NWS wind bearing to a compact 16-point compass direction."""
     try:

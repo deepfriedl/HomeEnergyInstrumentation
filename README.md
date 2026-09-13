@@ -89,4 +89,6 @@ code, and print/project names.
 With those same private settings present, the app maintains a read-only local
 status subscription and stores printer state, progress, temperatures, fan
 activity, and AMS conditions once per minute. Electrical power remains the
-responsibility of the separate Shelly plug assigned to the printer.
+responsibility of the separate Shelly plug assigned to the printer. Set
+`ENERGY_BAMBU_POWER_DEVICE_NAME` to that Shelly device's private Settings name
+to link its power and voltage history to the printer page.
