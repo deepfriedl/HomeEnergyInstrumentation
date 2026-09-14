@@ -41,6 +41,22 @@ docker compose exec home-energy python -m app.import_logs /app/data/collector.lo
 
 The device IPs must first exist in Settings. The importer is idempotent: re-running it does not duplicate device/timestamp readings.
 
+## Normalize one Shelly Plug US Gen4
+
+`scripts/normalize_shelly.py` is an interactive, one-plug-at-a-time local
+configuration tool. It prompts for the plug's LAN address and friendly name,
+then shows the current configuration before requiring `APPLY` to proceed.
+It sets the device and switch names, sets power-on recovery to `on`, and
+disables the unused Shelly access point. It does not switch the relay, change
+station Wi-Fi, update firmware, or alter cloud/radio settings.
+
+It writes a pre-change JSON backup to `shelly-backups/`, which is intentionally
+ignored by Git. Run it from the repository directory on a LAN-connected machine:
+
+```sh
+python3 scripts/normalize_shelly.py
+```
+
 ## Lennox S40 discovery
 
 The optional discovery command makes a read-only local connection to a Lennox
