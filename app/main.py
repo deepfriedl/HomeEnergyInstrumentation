@@ -105,8 +105,9 @@ def dashboard(request: Request, range: str = "24h"):
         return RedirectResponse("/?range=24h", status_code=303)
     devices, series = db.overview(range)
     comparison = db.comparison_series(range)
+    supply = db.supply_series(range)
     bambu_power_device = db.bambu_power_device()
-    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "comparison": comparison, "hvac": db.hvac_latest(), "weather": db.weather_latest(), "bambu": db.bambu_latest(), "bambu_power_device": bambu_power_device, "range": range, "ranges": db.RANGES})
+    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "comparison": comparison, "supply": supply, "hvac": db.hvac_latest(), "weather": db.weather_latest(), "bambu": db.bambu_latest(), "bambu_power_device": bambu_power_device, "range": range, "ranges": db.RANGES})
 
 
 @app.get("/hvac", response_class=HTMLResponse)

@@ -69,6 +69,13 @@ def initialize():
           UNIQUE(device_id, resolution, bucket_start)
         );
         CREATE INDEX IF NOT EXISTS rollups_range ON rollups(resolution, bucket_start);
+        CREATE TABLE IF NOT EXISTS supply_rollups (
+          id INTEGER PRIMARY KEY, resolution TEXT NOT NULL, bucket_start TEXT NOT NULL,
+          avg_voltage REAL, inferred_outage_count INTEGER NOT NULL DEFAULT 0,
+          sample_count INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(resolution, bucket_start)
+        );
+        CREATE INDEX IF NOT EXISTS supply_rollups_range ON supply_rollups(resolution, bucket_start);
         CREATE TABLE IF NOT EXISTS hvac_readings (
           id INTEGER PRIMARY KEY,
           observed_at TEXT NOT NULL UNIQUE,
@@ -274,6 +281,40 @@ def overview(range_key="24h"):
     return [dict(row) for row in rows], [dict(row) for row in series]
 
 
+def supply_series(range_key="24h"):
+    """Supply-voltage history with inferred outages kept distinct from measurements.
+
+    A zero is never fabricated from a missing row.  It is marked only when every
+    enabled plug recorded an explicit polling failure in the same minute.
+    """
+    hours, resolution = RANGES.get(range_key, RANGES["24h"])
+    cutoff = iso(now() - timedelta(hours=hours))
+    with connection() as conn:
+        if resolution != "raw":
+            rows = conn.execute("""SELECT bucket_start AS observed_at, avg_voltage AS voltage,
+              inferred_outage_count > 0 AS inferred_outage
+              FROM supply_rollups WHERE resolution=? AND bucket_start>=?
+              ORDER BY bucket_start""", (resolution, cutoff)).fetchall()
+            return [dict(row) for row in rows]
+
+        expected = conn.execute("SELECT COUNT(*) FROM devices WHERE enabled=1").fetchone()[0]
+        if not expected:
+            return []
+        rows = conn.execute("""WITH minute_readings AS (
+            SELECT strftime('%Y-%m-%dT%H:%M:00+00:00', r.observed_at) AS observed_at,
+              AVG(r.voltage) AS voltage,
+              COUNT(DISTINCT CASE WHEN r.voltage IS NOT NULL THEN r.device_id END) AS reporters,
+              COUNT(DISTINCT CASE WHEN r.error IS NOT NULL THEN r.device_id END) AS failures
+            FROM readings r JOIN devices d ON d.id=r.device_id
+            WHERE d.enabled=1 AND r.observed_at>=?
+            GROUP BY strftime('%Y-%m-%dT%H:%M:00+00:00', r.observed_at)
+          ) SELECT observed_at,
+            CASE WHEN reporters > 0 THEN voltage ELSE NULL END AS voltage,
+            CASE WHEN reporters = 0 AND failures >= ? THEN 1 ELSE 0 END AS inferred_outage
+          FROM minute_readings ORDER BY observed_at""", (cutoff, expected)).fetchall()
+    return [dict(row) for row in rows]
+
+
 def device_series(device_id, range_key="24h"):
     hours, resolution = RANGES.get(range_key, RANGES["24h"])
     cutoff = iso(now() - timedelta(hours=hours))
@@ -453,6 +494,39 @@ def cleanup_and_rollup():
             conn.execute("DELETE FROM rollups WHERE resolution=? AND bucket_start < ?", (resolution, iso(now()-timedelta(days=days))))
         conn.execute("UPDATE readings SET raw_json=NULL WHERE observed_at < ?", (iso(now()-timedelta(days=30)),))
         conn.execute("DELETE FROM readings WHERE observed_at < ?", (iso(now()-timedelta(days=7)),))
+
+        # Backfill older history from the existing device rollups.  It has no
+        # outage evidence, so those entries remain measured-voltage points only.
+        conn.execute("""INSERT OR IGNORE INTO supply_rollups(
+          resolution, bucket_start, avg_voltage, inferred_outage_count, sample_count
+        ) SELECT resolution, bucket_start, AVG(avg_voltage), 0, SUM(sample_count)
+          FROM rollups GROUP BY resolution, bucket_start""")
+
+        # Preserve the distinction for new data before raw readings age out:
+        # a minute becomes an inferred outage only when every enabled plug
+        # explicitly recorded an error and none supplied a voltage reading.
+        expected_devices = conn.execute("SELECT COUNT(*) FROM devices WHERE enabled=1").fetchone()[0]
+        if expected_devices:
+            for resolution, fmt in (("5m", "%Y-%m-%dT%H:%M:00+00:00"), ("hour", "%Y-%m-%dT%H:00:00+00:00"), ("day", "%Y-%m-%dT00:00:00+00:00")):
+                conn.execute(f"""INSERT OR REPLACE INTO supply_rollups(
+                  resolution, bucket_start, avg_voltage, inferred_outage_count, sample_count
+                ) WITH minute_readings AS (
+                  SELECT strftime('%Y-%m-%dT%H:%M:00+00:00', r.observed_at) AS observed_at,
+                    AVG(r.voltage) AS voltage,
+                    COUNT(DISTINCT CASE WHEN r.voltage IS NOT NULL THEN r.device_id END) AS reporters,
+                    COUNT(DISTINCT CASE WHEN r.error IS NOT NULL THEN r.device_id END) AS failures
+                  FROM readings r JOIN devices d ON d.id=r.device_id
+                  WHERE d.enabled=1
+                  GROUP BY strftime('%Y-%m-%dT%H:%M:00+00:00', r.observed_at)
+                ) SELECT ?, strftime(?, observed_at),
+                  AVG(CASE WHEN reporters > 0 THEN voltage END),
+                  SUM(CASE WHEN reporters = 0 AND failures >= ? THEN 1 ELSE 0 END),
+                  SUM(CASE WHEN reporters > 0 OR failures >= ? THEN 1 ELSE 0 END)
+                FROM minute_readings GROUP BY strftime(?, observed_at)""",
+                  (resolution, fmt, expected_devices, expected_devices, fmt))
+        for resolution, days in (("5m", 30), ("hour", 183), ("day", 548)):
+            conn.execute("DELETE FROM supply_rollups WHERE resolution=? AND bucket_start < ?", (resolution, iso(now()-timedelta(days=days))))
+
         for resolution, fmt in (("5m", "%Y-%m-%dT%H:%M:00+00:00"), ("hour", "%Y-%m-%dT%H:00:00+00:00"), ("day", "%Y-%m-%dT00:00:00+00:00")):
             conn.execute(f"""INSERT OR REPLACE INTO hvac_rollups(
               resolution, bucket_start, avg_indoor_temp_f, avg_indoor_humidity_pct,
