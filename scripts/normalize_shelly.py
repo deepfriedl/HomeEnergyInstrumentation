@@ -11,6 +11,7 @@ import ipaddress
 import json
 import hashlib
 from getpass import getpass
+import secrets
 import sys
 import time
 import urllib.error
@@ -27,30 +28,65 @@ class ShellyError(RuntimeError):
     """A local Shelly RPC request failed."""
 
 
+def digest_authorization(method, uri, password, challenge):
+    """Build an RFC 7616 SHA-256 Digest header for Python versions before 3.13."""
+    if not challenge or not challenge.lower().startswith("digest "):
+        raise ShellyError("device did not provide a Digest authentication challenge")
+    values = urllib.request.parse_keqv_list(urllib.request.parse_http_list(challenge[7:]))
+    realm = values.get("realm")
+    nonce = values.get("nonce")
+    qop = values.get("qop", "auth")
+    algorithm = values.get("algorithm", "MD5").upper()
+    if not realm or not nonce or algorithm != "SHA-256" or "auth" not in qop.split(","):
+        raise ShellyError("device returned an unsupported Digest authentication challenge")
+    nc = "00000001"
+    cnonce = secrets.token_hex(16)
+    ha1 = hashlib.sha256(f"admin:{realm}:{password}".encode("utf-8")).hexdigest()
+    ha2 = hashlib.sha256(f"{method}:{uri}".encode("utf-8")).hexdigest()
+    response = hashlib.sha256(f"{ha1}:{nonce}:{nc}:{cnonce}:auth:{ha2}".encode("utf-8")).hexdigest()
+    return (
+        "Digest "
+        f'username="admin", realm="{realm}", nonce="{nonce}", uri="{uri}", '
+        f'response="{response}", algorithm=SHA-256, qop=auth, nc={nc}, cnonce="{cnonce}"'
+    )
+
+
 def rpc(host, method, params=None, password=None):
     """Send one JSON-RPC request to a Gen2+ Shelly device."""
     payload = {"id": 1, "method": method}
     if params:
         payload["params"] = params
-    url_host = f"[{host}]" if ":" in host else host
-    request = urllib.request.Request(
-        f"http://{url_host}/rpc",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    # `prompt_host()` accepts literal addresses.  Keep the helper correct for
+    # IPv6 while also allowing a host:port endpoint in its local test harness.
     try:
-        if password:
-            passwords = urllib.request.HTTPPasswordMgrWithDefaultRealm()
-            passwords.add_password(None, f"http://{url_host}/", "admin", password)
-            opener = urllib.request.build_opener(urllib.request.HTTPDigestAuthHandler(passwords))
-            response_context = opener.open(request, timeout=TIMEOUT_SECONDS)
-        else:
-            response_context = urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS)
+        url_host = f"[{host}]" if ipaddress.ip_address(host).version == 6 else host
+    except ValueError:
+        url_host = host
+    url = f"http://{url_host}/rpc"
+    body = json.dumps(payload).encode("utf-8")
+
+    def request(authorization=None):
+        headers = {"Content-Type": "application/json"}
+        if authorization:
+            headers["Authorization"] = authorization
+        return urllib.request.Request(url, data=body, headers=headers, method="POST")
+
+    try:
+        response_context = urllib.request.urlopen(request(), timeout=TIMEOUT_SECONDS)
         with response_context as response:
             reply = json.load(response)
     except urllib.error.HTTPError as exc:
-        raise ShellyError(f"{method}: HTTP {exc.code}") from exc
+        if exc.code != 401 or not password:
+            raise ShellyError(f"{method}: HTTP {exc.code}") from exc
+        challenge = next((item for item in exc.headers.get_all("WWW-Authenticate", []) if item.lower().startswith("digest ")), None)
+        try:
+            authorization = digest_authorization("POST", "/rpc", password, challenge)
+            with urllib.request.urlopen(request(authorization), timeout=TIMEOUT_SECONDS) as response:
+                reply = json.load(response)
+        except urllib.error.HTTPError as retry_exc:
+            raise ShellyError(f"{method}: HTTP {retry_exc.code} after authentication") from retry_exc
+        except ValueError as retry_exc:
+            raise ShellyError(f"{method}: invalid Digest authentication challenge") from retry_exc
     except (urllib.error.URLError, TimeoutError) as exc:
         raise ShellyError(f"{method}: {exc.reason if hasattr(exc, 'reason') else exc}") from exc
     except json.JSONDecodeError as exc:
