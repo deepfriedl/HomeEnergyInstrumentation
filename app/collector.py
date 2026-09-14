@@ -1,8 +1,13 @@
 import asyncio
 import json
+import os
 import urllib.request
 
 from app import db
+
+
+SHELLY_USERNAME = "admin"
+SHELLY_PASSWORD = os.getenv("ENERGY_SHELLY_PASSWORD", "")
 
 
 def pick(payload, *paths):
@@ -22,7 +27,15 @@ def fetch(device):
     errors = []
     for endpoint in ("rpc/Switch.GetStatus?id=0", "status"):
         try:
-            with urllib.request.urlopen(f"http://{device['ip_address']}/{endpoint}", timeout=8) as response:
+            url = f"http://{device['ip_address']}/{endpoint}"
+            if SHELLY_PASSWORD:
+                passwords = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+                passwords.add_password(None, url, SHELLY_USERNAME, SHELLY_PASSWORD)
+                opener = urllib.request.build_opener(urllib.request.HTTPDigestAuthHandler(passwords))
+                response_context = opener.open(url, timeout=8)
+            else:
+                response_context = urllib.request.urlopen(url, timeout=8)
+            with response_context as response:
                 payload = json.load(response)
             return payload, None
         except Exception as exc:  # Keep collecting other devices after any failure.

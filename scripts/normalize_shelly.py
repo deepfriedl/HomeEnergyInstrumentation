@@ -9,6 +9,8 @@ modified.
 
 import ipaddress
 import json
+import hashlib
+from getpass import getpass
 import sys
 import time
 import urllib.error
@@ -25,7 +27,7 @@ class ShellyError(RuntimeError):
     """A local Shelly RPC request failed."""
 
 
-def rpc(host, method, params=None):
+def rpc(host, method, params=None, password=None):
     """Send one JSON-RPC request to a Gen2+ Shelly device."""
     payload = {"id": 1, "method": method}
     if params:
@@ -38,7 +40,14 @@ def rpc(host, method, params=None):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+        if password:
+            passwords = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+            passwords.add_password(None, f"http://{url_host}/", "admin", password)
+            opener = urllib.request.build_opener(urllib.request.HTTPDigestAuthHandler(passwords))
+            response_context = opener.open(request, timeout=TIMEOUT_SECONDS)
+        else:
+            response_context = urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS)
+        with response_context as response:
             reply = json.load(response)
     except urllib.error.HTTPError as exc:
         raise ShellyError(f"{method}: HTTP {exc.code}") from exc
@@ -77,15 +86,27 @@ def prompt_name():
         print("A friendly name is required.")
 
 
-def read_snapshot(host):
+def prompt_password():
+    while True:
+        password = getpass("Shared Shelly password (input hidden): ")
+        if not password:
+            print("A password is required to enable local authentication.")
+            continue
+        confirmation = getpass("Repeat shared Shelly password: ")
+        if password == confirmation:
+            return password
+        print("Passwords did not match. Try again.")
+
+
+def read_snapshot(host, password=None):
     """Read the configuration needed for review, backup, and verification."""
     return {
         "collected_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "device_info": rpc(host, "Shelly.GetDeviceInfo"),
-        "system": rpc(host, "Sys.GetConfig"),
-        "wifi": rpc(host, "WiFi.GetConfig"),
-        "wifi_status": rpc(host, "WiFi.GetStatus"),
-        "switch": rpc(host, "Switch.GetConfig", {"id": 0}),
+        "device_info": rpc(host, "Shelly.GetDeviceInfo", password=password),
+        "system": rpc(host, "Sys.GetConfig", password=password),
+        "wifi": rpc(host, "WiFi.GetConfig", password=password),
+        "wifi_status": rpc(host, "WiFi.GetStatus", password=password),
+        "switch": rpc(host, "Switch.GetConfig", {"id": 0}, password=password),
     }
 
 
@@ -107,6 +128,7 @@ def print_review(host, name, snapshot):
     print(f"  Device and switch name: {name}")
     print("  Power-on state:         on")
     print("  Shelly access point:    disabled")
+    print("  Local authentication:   enabled")
     print("  No relay, station Wi-Fi, firmware, cloud, or radio settings will change.")
 
 
@@ -129,19 +151,21 @@ def write_backup(host, snapshot):
     return path
 
 
-def apply_baseline(host, name):
-    rpc(host, "Sys.SetConfig", {"config": {"device": {"name": name}}})
-    rpc(host, "Switch.SetConfig", {"id": 0, "config": {"name": name, "initial_state": "on"}})
+def apply_baseline(host, name, password, device_id):
+    rpc(host, "Sys.SetConfig", {"config": {"device": {"name": name}}}, password=password)
+    rpc(host, "Switch.SetConfig", {"id": 0, "config": {"name": name, "initial_state": "on"}}, password=password)
     # Keep this last: it changes only the unused Shelly AP, not station Wi-Fi.
-    rpc(host, "WiFi.SetConfig", {"config": {"ap": {"enable": False}}})
+    rpc(host, "WiFi.SetConfig", {"config": {"ap": {"enable": False}}}, password=password)
+    ha1 = hashlib.sha256(f"admin:{device_id}:{password}".encode("utf-8")).hexdigest()
+    rpc(host, "Shelly.SetAuth", {"user": "admin", "realm": device_id, "ha1": ha1}, password=password)
 
 
-def verify(host, name):
+def verify(host, name, password):
     """Re-read after applying, allowing a short Wi-Fi configuration settle time."""
     last_error = None
     for _ in range(5):
         try:
-            snapshot = read_snapshot(host)
+            snapshot = read_snapshot(host, password)
             switch = snapshot["switch"]
             valid = (
                 nested(snapshot["system"], "device", "name") == name
@@ -162,8 +186,9 @@ def main():
     print("Shelly Plug normalizer — one plug per run")
     host = prompt_host()
     name = prompt_name()
+    password = prompt_password()
     try:
-        snapshot = read_snapshot(host)
+        snapshot = read_snapshot(host, password)
         require_station_connection(host, snapshot)
     except ShellyError as exc:
         print(f"\nCould not read {host}: {exc}", file=sys.stderr)
@@ -176,14 +201,17 @@ def main():
 
     try:
         backup = write_backup(host, snapshot)
-        apply_baseline(host, name)
-        verify(host, name)
+        device_id = snapshot["device_info"].get("id")
+        if not device_id:
+            raise ShellyError("device did not report its identifier; cannot configure authentication")
+        apply_baseline(host, name, password, device_id)
+        verify(host, name, password)
     except (OSError, ShellyError) as exc:
         print(f"\nNormalization did not complete: {exc}", file=sys.stderr)
         print("The pre-change backup is retained if it was created.", file=sys.stderr)
         return 1
 
-    print(f"\nSuccess. Verified {name!r} at {host}.")
+    print(f"\nSuccess. Verified {name!r} at {host}, with local authentication enabled.")
     print(f"Pre-change backup: {backup}")
     return 0
 

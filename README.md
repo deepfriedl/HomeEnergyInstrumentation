@@ -57,6 +57,12 @@ ignored by Git. Run it from the repository directory on a LAN-connected machine:
 python3 scripts/normalize_shelly.py
 ```
 
+The normalizer prompts for one shared Shelly password (with hidden input),
+enables local Digest authentication as its final step, and never saves that
+password. Before normalizing plugs, set the same private value in `.env` as
+`ENERGY_SHELLY_PASSWORD`, then rebuild the app. The collector uses it only for
+local Shelly polling.
+
 ## Lennox S40 discovery
 
 The optional discovery command makes a read-only local connection to a Lennox
