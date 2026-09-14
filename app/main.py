@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -15,14 +16,29 @@ from app.bambu import BambuCollector
 from app.lennox import LennoxCollector
 from app.weather import WeatherCollector
 
+logger = logging.getLogger(__name__)
+
+
+async def run_collection_step(name, action):
+    """Run one collector without allowing its failure to stop all telemetry."""
+    try:
+        await action()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Telemetry collection step failed: %s", name)
+
 
 async def collector_loop(lennox_collector, weather_collector, bambu_collector):
     while True:
-        await collect_once()
-        await lennox_collector.collect_once()
-        await weather_collector.collect_once()
-        await bambu_collector.collect_once()
-        db.cleanup_and_rollup()
+        await run_collection_step("Shelly", collect_once)
+        await run_collection_step("Lennox S40", lennox_collector.collect_once)
+        await run_collection_step("NWS weather", weather_collector.collect_once)
+        await run_collection_step("Bambu printer", bambu_collector.collect_once)
+        try:
+            db.cleanup_and_rollup()
+        except Exception:
+            logger.exception("Telemetry rollup and retention maintenance failed")
         await asyncio.sleep(60)
 
 
