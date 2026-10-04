@@ -110,7 +110,7 @@ def dashboard(request: Request, range: str = "24h"):
     comparison = db.comparison_series(range)
     supply = db.supply_series(range)
     bambu_power_device = db.bambu_power_device()
-    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "comparison": comparison, "supply": supply, "hvac": db.hvac_latest(), "weather": db.weather_latest(), "bambu": db.bambu_latest(), "bambu_power_device": bambu_power_device, "range": range, "ranges": db.RANGES})
+    return templates.TemplateResponse(request, "dashboard.html", {"devices": devices, "series": series, "comparison": comparison, "supply": supply, "hvac": db.hvac_latest(), "weather": db.weather_latest(), "bambu": db.bambu_latest(), "bambu_power_device": bambu_power_device, "range": range, "ranges": db.RANGES, "agent_model": agent.OLLAMA_MODEL})
 
 
 @app.get("/hvac", response_class=HTMLResponse)
@@ -163,7 +163,7 @@ def settings(request: Request):
 def agent_page(request: Request):
     redirect = require_login(request)
     if redirect: return redirect
-    return templates.TemplateResponse(request, "agent.html", {"model": agent.OLLAMA_MODEL})
+    return RedirectResponse("/#home-energy-analyst", status_code=303)
 
 
 @app.post("/agent/ask")

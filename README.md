@@ -139,7 +139,8 @@ the NVIDIA Container Toolkit on the server so Docker can access the GPU.
    docker compose --profile agent exec ollama ollama pull qwen3:8b
    ```
 
-4. Open **Ask Home Energy** in the authenticated dashboard navigation.
+4. Open the authenticated dashboard; the **Ask Home Energy** card appears at
+   the top of the overview.
 
 If the model service is unavailable, the rest of the dashboard and all
 collectors continue operating normally. Set `ENERGY_AGENT_ENABLED=false` and
