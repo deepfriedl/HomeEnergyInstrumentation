@@ -146,3 +146,7 @@ If the model service is unavailable, the rest of the dashboard and all
 collectors continue operating normally. Set `ENERGY_AGENT_ENABLED=false` and
 run `docker compose up -d` to hide the analyst without deleting its downloaded
 model volume.
+
+Agent requests are handled one at a time so concurrent browser tabs do not
+compete for the local GPU. Additional requests wait in a short in-memory queue
+and show a queued status in the dashboard.

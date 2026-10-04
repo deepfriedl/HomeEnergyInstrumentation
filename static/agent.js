@@ -25,15 +25,23 @@ async function ask(value){
   const button=form.querySelector('button');
   addMessage('user',value);
   history.push({role:'user',content:value});
-  question.value=''; button.disabled=true; status.textContent='Analyzing local data…';
+  question.value=''; button.disabled=true;
   try{
+    const queueResponse=await fetch('/agent/status');
+    const queueState=queueResponse.ok ? await queueResponse.json() : null;
+    if(queueState?.active){
+      const ahead=(queueState.waiting||0)+1;
+      status.textContent=`Another analysis is in progress. Yours is queued behind ${ahead} ${ahead===1?'request':'requests'}.`;
+    }else{
+      status.textContent='Analyzing local data…';
+    }
     const body=new FormData(); body.set('question',value); body.set('history',JSON.stringify(history.slice(-8)));
     const response=await fetch('/agent/ask',{method:'POST',body});
     const result=await response.json();
     if(!response.ok) throw new Error(result.detail||'Analysis failed.');
     addMessage('assistant',result.answer,result.sources||[]);
     history.push({role:'assistant',content:result.answer});
-    status.textContent=`Answered by ${result.model} locally.`;
+    status.textContent=result.queued?`Queued analysis answered by ${result.model} locally.`:`Answered by ${result.model} locally.`;
   }catch(error){
     addMessage('assistant',error.message||'Analysis is unavailable.');
     status.textContent='No data was changed.';

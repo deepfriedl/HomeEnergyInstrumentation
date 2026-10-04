@@ -58,6 +58,8 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Home Energy", lifespan=lifespan)
+agent_request_lock = asyncio.Lock()
+agent_waiting = 0
 session_secret = os.getenv("ENERGY_SESSION_SECRET")
 if not session_secret:
     raise RuntimeError("Set ENERGY_SESSION_SECRET in .env before starting the application.")
@@ -166,8 +168,16 @@ def agent_page(request: Request):
     return RedirectResponse("/#home-energy-analyst", status_code=303)
 
 
+@app.get("/agent/status")
+def agent_status(request: Request):
+    if not signed_in(request):
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
+    return {"active": agent_request_lock.locked(), "waiting": agent_waiting}
+
+
 @app.post("/agent/ask")
 async def agent_ask(request: Request, question: str = Form(), history: str = Form("[]")):
+    global agent_waiting
     redirect = require_login(request)
     if redirect:
         return JSONResponse({"detail": "Authentication required"}, status_code=401)
@@ -175,13 +185,27 @@ async def agent_ask(request: Request, question: str = Form(), history: str = For
         parsed_history = json.loads(history)
     except json.JSONDecodeError:
         parsed_history = []
+
+    queued = agent_request_lock.locked()
+    entered_queue = False
+    if queued:
+        agent_waiting += 1
+        entered_queue = True
     try:
-        result = await asyncio.to_thread(agent.answer, question, parsed_history)
-        return JSONResponse(result)
+        async with agent_request_lock:
+            if entered_queue:
+                agent_waiting -= 1
+                entered_queue = False
+            result = await asyncio.to_thread(agent.answer, question, parsed_history)
+            result["queued"] = queued
+            return JSONResponse(result)
     except ValueError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=400)
     except agent.AgentUnavailable as exc:
         return JSONResponse({"detail": str(exc)}, status_code=503)
+    finally:
+        if entered_queue:
+            agent_waiting -= 1
 
 
 @app.post("/settings/device")
