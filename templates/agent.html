@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="title-row"><div><p class="eyebrow">LOCAL ANALYSIS</p><h1>Ask Home Energy</h1><p class="muted">Answers use local, read-only analytics. Conversations are kept only in this browser tab.</p></div></div>
+<section class="agent-layout">
+  <div class="panel agent-chat" id="agent-chat" aria-live="polite"><div class="agent-message assistant"><strong>Home Energy Analyst</strong><p>Ask about energy use, supply voltage, collection health, or printer activity.</p></div></div>
+  <form class="agent-form" id="agent-form"><label for="agent-question">Your question</label><textarea id="agent-question" name="question" maxlength="2400" placeholder="Why was refrigerator consumption higher this week?" required></textarea><div><button class="primary" type="submit">Analyze</button><small id="agent-status" class="muted">Uses {{model}} locally.</small></div></form>
+</section>
+<section class="panel"><h2>Try a question</h2><div class="suggestions"><button type="button" data-question="Which devices used the most energy in the last 7 days?">Top energy use this week</button><button type="button" data-question="Were there any supply-voltage events in the last 7 days?">Supply voltage this week</button><button type="button" data-question="Is collection healthy across all devices in the last 24 hours?">Check collection health</button><button type="button" data-question="How does printer activity compare with its plug power in the last 24 hours?">Compare printer activity and power</button></div></section>
+<script src="/static/agent.js"></script>
+{% endblock %}

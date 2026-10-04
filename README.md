@@ -114,3 +114,34 @@ activity, and AMS conditions once per minute. Electrical power remains the
 responsibility of the separate Shelly plug assigned to the printer. Set
 `ENERGY_BAMBU_POWER_DEVICE_NAME` to that Shelly device's private Settings name
 to link its power and voltage history to the printer page.
+
+## Optional local Home Energy Analyst (v3)
+
+The dashboard can use a locally hosted Qwen model through Ollama. The model is
+only given compact results from read-only analytics tools; it has no shell,
+network tools, device-control, arbitrary-SQL, or configuration-file access. Chat
+history remains in the browser tab and is not written to the database.
+
+The optional `ollama` Compose service has no published host port. It requires
+the NVIDIA Container Toolkit on the server so Docker can access the GPU.
+
+1. Set `ENERGY_AGENT_ENABLED=true` and leave
+   `ENERGY_OLLAMA_MODEL=qwen3:8b` in the private `.env` file.
+2. Start the dashboard and local model service:
+
+   ```sh
+   docker compose --profile agent up -d --build
+   ```
+
+3. Download the selected model once:
+
+   ```sh
+   docker compose --profile agent exec ollama ollama pull qwen3:8b
+   ```
+
+4. Open **Ask Home Energy** in the authenticated dashboard navigation.
+
+If the model service is unavailable, the rest of the dashboard and all
+collectors continue operating normally. Set `ENERGY_AGENT_ENABLED=false` and
+run `docker compose up -d` to hide the analyst without deleting its downloaded
+model volume.

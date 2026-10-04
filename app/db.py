@@ -269,7 +269,7 @@ def overview(range_key="24h"):
     hours, resolution = RANGES.get(range_key, RANGES["24h"])
     cutoff = iso(now() - timedelta(hours=hours))
     with connection() as conn:
-        rows = conn.execute("""SELECT d.id, d.name, d.color, r.* FROM devices d
+        rows = conn.execute("""SELECT d.id, d.name, d.color, d.enabled, r.* FROM devices d
           LEFT JOIN readings r ON r.id=(SELECT id FROM readings WHERE device_id=d.id ORDER BY observed_at DESC LIMIT 1)
           ORDER BY d.name""").fetchall()
         if resolution == "raw":

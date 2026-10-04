@@ -17,6 +17,18 @@ services:
       ENERGY_BAMBU_SERIAL: ${ENERGY_BAMBU_SERIAL:-}
       ENERGY_BAMBU_ACCESS_CODE: ${ENERGY_BAMBU_ACCESS_CODE:-}
       ENERGY_BAMBU_POWER_DEVICE_NAME: ${ENERGY_BAMBU_POWER_DEVICE_NAME:-}
+      ENERGY_AGENT_ENABLED: ${ENERGY_AGENT_ENABLED:-false}
+      ENERGY_OLLAMA_URL: ${ENERGY_OLLAMA_URL:-http://ollama:11434}
+      ENERGY_OLLAMA_MODEL: ${ENERGY_OLLAMA_MODEL:-qwen3:8b}
     volumes:
       - ./data:/app/data
       - ./config:/app/config
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["agent"]
+    restart: unless-stopped
+    gpus: all
+    volumes:
+      - ollama-models:/root/.ollama
+volumes:
+  ollama-models:

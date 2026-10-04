@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -11,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from app import db
+from app import agent
 from app.collector import collect_once
 from app.bambu import BambuCollector
 from app.lennox import LennoxCollector
@@ -69,6 +71,7 @@ app.add_middleware(
 )
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+templates.env.globals["agent_available"] = agent.configured
 
 
 def signed_in(request): return request.session.get("user") == db.admin_username()
@@ -154,6 +157,31 @@ def settings(request: Request):
     redirect = require_login(request)
     if redirect: return redirect
     return templates.TemplateResponse(request, "settings.html", {"devices": db.devices()})
+
+
+@app.get("/agent", response_class=HTMLResponse)
+def agent_page(request: Request):
+    redirect = require_login(request)
+    if redirect: return redirect
+    return templates.TemplateResponse(request, "agent.html", {"model": agent.OLLAMA_MODEL})
+
+
+@app.post("/agent/ask")
+async def agent_ask(request: Request, question: str = Form(), history: str = Form("[]")):
+    redirect = require_login(request)
+    if redirect:
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
+    try:
+        parsed_history = json.loads(history)
+    except json.JSONDecodeError:
+        parsed_history = []
+    try:
+        result = await asyncio.to_thread(agent.answer, question, parsed_history)
+        return JSONResponse(result)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+    except agent.AgentUnavailable as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=503)
 
 
 @app.post("/settings/device")
