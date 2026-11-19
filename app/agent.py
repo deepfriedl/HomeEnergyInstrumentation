@@ -31,16 +31,16 @@ def configured():
     return AGENT_ENABLED
 
 
-def _chat(messages):
-    payload = json.dumps(
-        {
-            "model": OLLAMA_MODEL,
-            "messages": messages,
-            "tools": analysis.TOOL_SCHEMAS,
-            "stream": False,
-            "options": {"temperature": 0.1, "num_ctx": 8192},
-        }
-    ).encode("utf-8")
+def _chat(messages, allow_tools=True):
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": False,
+        "options": {"temperature": 0.1, "num_ctx": 8192},
+    }
+    if allow_tools:
+        payload["tools"] = analysis.TOOL_SCHEMAS
+    payload = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
         data=payload,
@@ -93,4 +93,11 @@ def answer(question, history=None):
             result = analysis.run_tool(name, function.get("arguments", {}))
             sources.append({"tool": name, "period": result.get("period") if isinstance(result, dict) else None})
             messages.append({"role": "tool", "content": json.dumps(result, separators=(",", ":"))})
-    raise AgentUnavailable("The model needed too many analysis steps. Please ask a narrower question.")
+    # Some questions reasonably require several small lookups. Once the bounded
+    # tool budget is spent, ask for a final response without offering more tools
+    # rather than discarding the evidence already collected.
+    message = _chat(messages, allow_tools=False)
+    text = str(message.get("content") or "").strip()
+    if text:
+        return {"answer": text, "sources": sources, "model": OLLAMA_MODEL}
+    raise AgentUnavailable("The local model returned no usable response after analyzing the available data.")
