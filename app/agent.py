@@ -15,6 +15,8 @@ MAX_TOOL_ROUNDS = 3
 
 SYSTEM_PROMPT = """You are Home Energy Analyst, a careful assistant for one private home.
 Use the supplied read-only analytics tools for any factual claim about the home.
+For weekday, weekend, or day-of-week energy questions, call
+energy_weekday_comparison first; do not claim that this comparison is unavailable.
 Use query_telemetry when the question needs a custom grouping, comparison, trend,
 or correlation that the summary tools do not provide. Never invent measurements,
 do not reveal device network configuration, and do not offer to control plugs or

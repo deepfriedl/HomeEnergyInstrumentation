@@ -138,6 +138,55 @@ def energy_summary(period="7d", device=None):
     }
 
 
+def energy_weekday_comparison(device, period="30d"):
+    """Compare one device's daily energy use on weekends and weekdays."""
+    period, hours, resolution, cutoff = _period(period)
+    chosen = _resolved_device(device)
+    if not chosen:
+        return {"error": "Choose one configured device.", "available_devices": [d["name"] for d in db.devices()]}
+
+    with db.connection() as conn:
+        if resolution == "raw":
+            rows = conn.execute("""
+                WITH daily AS (
+                  SELECT strftime('%Y-%m-%d', observed_at) AS day,
+                    MAX(total_kwh) - MIN(total_kwh) AS energy_kwh,
+                    COUNT(watts) AS samples
+                  FROM readings
+                  WHERE device_id=? AND observed_at>=? AND total_kwh IS NOT NULL
+                  GROUP BY strftime('%Y-%m-%d', observed_at)
+                ) SELECT CASE WHEN strftime('%w', day) IN ('0', '6') THEN 'weekend' ELSE 'weekday' END AS day_type,
+                  COUNT(*) AS days, ROUND(AVG(energy_kwh), 3) AS avg_daily_kwh,
+                  ROUND(SUM(energy_kwh), 3) AS total_kwh, SUM(samples) AS samples
+                FROM daily GROUP BY day_type ORDER BY day_type
+            """, (chosen["id"], cutoff)).fetchall()
+            method = "metered counter change by day"
+        else:
+            rows = conn.execute("""
+                WITH daily AS (
+                  SELECT strftime('%Y-%m-%d', bucket_start) AS day,
+                    SUM(avg_watts * sample_count / 60000.0) AS energy_kwh,
+                    SUM(sample_count) AS samples
+                  FROM rollups
+                  WHERE device_id=? AND resolution=? AND bucket_start>=?
+                  GROUP BY strftime('%Y-%m-%d', bucket_start)
+                ) SELECT CASE WHEN strftime('%w', day) IN ('0', '6') THEN 'weekend' ELSE 'weekday' END AS day_type,
+                  COUNT(*) AS days, ROUND(AVG(energy_kwh), 3) AS avg_daily_kwh,
+                  ROUND(SUM(energy_kwh), 3) AS total_kwh, SUM(samples) AS samples
+                FROM daily GROUP BY day_type ORDER BY day_type
+            """, (chosen["id"], resolution, cutoff)).fetchall()
+            method = "estimated from retained rollups"
+    return {
+        "device": chosen["name"],
+        "period": period,
+        "hours": hours,
+        "resolution": resolution,
+        "energy_method": method,
+        "groups": [dict(row) for row in rows],
+        "note": "A partial first or last calendar day can slightly skew the average. Compare the average daily kWh and days in each group; this is an association, not an explanation of the cause.",
+    }
+
+
 def supply_voltage(period="7d"):
     """Summarize the estimated supply series and explicitly count inferred outages."""
     period, hours, resolution, _ = _period(period)
@@ -426,6 +475,21 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "energy_weekday_comparison",
+            "description": "Compare one configured device's average daily energy use on weekends versus weekdays. Use this for questions about weekend, weekday, or day-of-week energy behavior; it is more reliable than manually grouping raw readings.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "device": {"type": "string", "description": "Exact configured device name."},
+                    "period": {"type": "string", "enum": list(PERIODS), "description": "Use 30d by default for a meaningful weekend comparison."},
+                },
+                "required": ["device"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "supply_voltage",
             "description": "Summarize estimated supply voltage, including explicitly inferred outages.",
             "parameters": {"type": "object", "properties": {"period": {"type": "string", "enum": list(PERIODS)}}},
@@ -467,6 +531,7 @@ TOOL_SCHEMAS = [
 _TOOLS = {
     "current_conditions": current_conditions,
     "energy_summary": energy_summary,
+    "energy_weekday_comparison": energy_weekday_comparison,
     "supply_voltage": supply_voltage,
     "collection_health": collection_health,
     "printer_activity": printer_activity,
