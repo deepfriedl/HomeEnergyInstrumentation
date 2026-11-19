@@ -1,15 +1,35 @@
 """Read-only, bounded analytics used by the Home Energy assistant.
 
-These functions deliberately return compact, explainable facts instead of raw
-telemetry or arbitrary SQL results.  They are also the future MCP tool surface.
+The model receives compact tool results rather than direct access to the app's
+database. ``query_telemetry`` is intentionally more flexible than the summary
+tools, but executes only against an in-memory copy of approved telemetry fields.
+It is also the future MCP tool surface.
 """
 
+import sqlite3
+import time
 from datetime import timedelta
 
 from app import db
 
 
 PERIODS = tuple(db.RANGES)
+MAX_SQL_LENGTH = 5_000
+MAX_SQL_ROWS = 100
+SQL_TIMEOUT_SECONDS = 2
+
+SAFE_SQL_TABLES = frozenset({
+    "power_samples", "power_rollups", "supply_samples", "supply_rollups",
+    "hvac_samples", "hvac_rollups", "weather_samples", "weather_rollups",
+    "printer_samples", "printer_rollups",
+})
+
+SAFE_SQL_FUNCTIONS = frozenset({
+    "abs", "avg", "coalesce", "count", "date", "datetime", "glob", "group_concat",
+    "ifnull", "instr", "julianday", "lag", "lead", "length", "like", "lower",
+    "ltrim", "max", "min", "nullif", "printf", "round", "rtrim", "strftime", "substr",
+    "sum", "time", "total", "trim", "unixepoch", "upper",
+})
 
 
 def _period(period):
@@ -187,6 +207,199 @@ def printer_activity(period="24h"):
     }
 
 
+def _copy_rows(destination, table, source, statement):
+    """Copy one explicitly selected, non-sensitive result set into memory."""
+    placeholders = ", ".join("?" for _ in destination.execute(f"PRAGMA table_info({table})"))
+    destination.executemany(
+        f"INSERT INTO {table} VALUES ({placeholders})",
+        (tuple(row) for row in source.execute(statement)),
+    )
+
+
+def _telemetry_database():
+    """Build an isolated, sanitized SQLite database for one assistant query.
+
+    The original database is never exposed to model-supplied SQL. In particular,
+    this copy deliberately excludes users, LAN addresses, raw responses, error
+    text, station identifiers, and all configuration.
+    """
+    safe = sqlite3.connect(":memory:")
+    safe.row_factory = sqlite3.Row
+    safe.executescript("""
+        CREATE TABLE power_samples (
+          observed_at TEXT, device_name TEXT, watts REAL, voltage REAL,
+          current REAL, total_kwh REAL
+        );
+        CREATE TABLE power_rollups (
+          bucket_start TEXT, device_name TEXT, resolution TEXT, avg_watts REAL,
+          max_watts REAL, avg_voltage REAL, min_voltage REAL, max_voltage REAL,
+          sample_count INTEGER, energy_kwh REAL
+        );
+        CREATE TABLE supply_samples (
+          observed_at TEXT, voltage REAL, reporting_plugs INTEGER,
+          inferred_outage INTEGER
+        );
+        CREATE TABLE supply_rollups (
+          bucket_start TEXT, resolution TEXT, avg_voltage REAL,
+          inferred_outage_count INTEGER, sample_count INTEGER
+        );
+        CREATE TABLE hvac_samples (
+          observed_at TEXT, indoor_temp_f REAL, indoor_humidity_pct REAL,
+          outdoor_temp_f REAL, cooling_rate_pct REAL, heating_rate_pct REAL,
+          blower_cfm REAL, system_mode TEXT, operation TEXT, fan_running INTEGER,
+          aux_active INTEGER, defrost_active INTEGER, alert_count INTEGER
+        );
+        CREATE TABLE hvac_rollups (
+          bucket_start TEXT, resolution TEXT, avg_indoor_temp_f REAL,
+          avg_indoor_humidity_pct REAL, avg_outdoor_temp_f REAL,
+          avg_cooling_rate_pct REAL, max_cooling_rate_pct REAL,
+          avg_heating_rate_pct REAL, max_heating_rate_pct REAL,
+          avg_blower_cfm REAL, max_blower_cfm REAL, sample_count INTEGER
+        );
+        CREATE TABLE weather_samples (
+          observed_at TEXT, temperature_f REAL, humidity_pct REAL, dewpoint_f REAL,
+          wind_mph REAL, wind_direction_degrees REAL,
+          precipitation_last_hour_in REAL, conditions TEXT
+        );
+        CREATE TABLE weather_rollups (
+          bucket_start TEXT, resolution TEXT, avg_temperature_f REAL,
+          avg_humidity_pct REAL, avg_dewpoint_f REAL, avg_wind_mph REAL,
+          total_precipitation_in REAL, sample_count INTEGER
+        );
+        CREATE TABLE printer_samples (
+          observed_at TEXT, print_state TEXT, print_percent REAL,
+          remaining_minutes REAL, layer_num REAL, total_layer_num REAL,
+          nozzle_temp_c REAL, nozzle_target_c REAL, bed_temp_c REAL,
+          bed_target_c REAL, cooling_fan_pct REAL, chamber_fan_pct REAL,
+          ams_temperature_c REAL, ams_humidity_index REAL, error_code TEXT
+        );
+        CREATE TABLE printer_rollups (
+          bucket_start TEXT, resolution TEXT, avg_print_percent REAL,
+          avg_nozzle_temp_c REAL, avg_nozzle_target_c REAL, avg_bed_temp_c REAL,
+          avg_bed_target_c REAL, avg_cooling_fan_pct REAL,
+          avg_chamber_fan_pct REAL, avg_ams_temperature_c REAL,
+          sample_count INTEGER
+        );
+        CREATE INDEX power_samples_time ON power_samples(observed_at);
+        CREATE INDEX power_rollups_time ON power_rollups(bucket_start, resolution);
+        CREATE INDEX hvac_samples_time ON hvac_samples(observed_at);
+        CREATE INDEX weather_samples_time ON weather_samples(observed_at);
+        CREATE INDEX printer_samples_time ON printer_samples(observed_at);
+    """)
+    with db.connection() as source:
+        _copy_rows(safe, "power_samples", source, """
+            SELECT r.observed_at, d.name, r.watts, r.voltage, r.current, r.total_kwh
+            FROM readings r JOIN devices d ON d.id=r.device_id
+        """)
+        _copy_rows(safe, "power_rollups", source, """
+            SELECT r.bucket_start, d.name, r.resolution, r.avg_watts, r.max_watts,
+              r.avg_voltage, r.min_voltage, r.max_voltage, r.sample_count,
+              ROUND(r.avg_watts * r.sample_count / 60000.0, 6)
+            FROM rollups r JOIN devices d ON d.id=r.device_id
+        """)
+        _copy_rows(safe, "supply_samples", source, """
+            WITH minute_readings AS (
+              SELECT strftime('%Y-%m-%dT%H:%M:00+00:00', r.observed_at) AS observed_at,
+                AVG(r.voltage) AS voltage,
+                COUNT(DISTINCT CASE WHEN r.voltage IS NOT NULL THEN r.device_id END) AS reporters,
+                COUNT(DISTINCT CASE WHEN r.error IS NOT NULL THEN r.device_id END) AS failures
+              FROM readings r JOIN devices d ON d.id=r.device_id
+              WHERE d.enabled=1
+              GROUP BY strftime('%Y-%m-%dT%H:%M:00+00:00', r.observed_at)
+            ) SELECT observed_at, CASE WHEN reporters > 0 THEN voltage END, reporters,
+              CASE WHEN reporters = 0 AND failures >= (SELECT COUNT(*) FROM devices WHERE enabled=1)
+                THEN 1 ELSE 0 END
+            FROM minute_readings
+        """)
+        _copy_rows(safe, "supply_rollups", source, """
+            SELECT bucket_start, resolution, avg_voltage, inferred_outage_count, sample_count
+            FROM supply_rollups
+        """)
+        _copy_rows(safe, "hvac_samples", source, """
+            SELECT observed_at, indoor_temp_f, indoor_humidity_pct, outdoor_temp_f,
+              cooling_rate_pct, heating_rate_pct, blower_cfm, system_mode, operation,
+              fan_running, aux_active, defrost_active, alert_count
+            FROM hvac_readings
+        """)
+        _copy_rows(safe, "hvac_rollups", source, """
+            SELECT bucket_start, resolution, avg_indoor_temp_f, avg_indoor_humidity_pct,
+              avg_outdoor_temp_f, avg_cooling_rate_pct, max_cooling_rate_pct,
+              avg_heating_rate_pct, max_heating_rate_pct, avg_blower_cfm,
+              max_blower_cfm, sample_count
+            FROM hvac_rollups
+        """)
+        _copy_rows(safe, "weather_samples", source, """
+            SELECT observed_at, temperature_f, humidity_pct, dewpoint_f, wind_mph,
+              wind_direction_degrees, precipitation_last_hour_in, conditions
+            FROM weather_readings
+        """)
+        _copy_rows(safe, "weather_rollups", source, """
+            SELECT bucket_start, resolution, avg_temperature_f, avg_humidity_pct,
+              avg_dewpoint_f, avg_wind_mph, total_precipitation_in, sample_count
+            FROM weather_rollups
+        """)
+        _copy_rows(safe, "printer_samples", source, """
+            SELECT observed_at, print_state, print_percent, remaining_minutes, layer_num,
+              total_layer_num, nozzle_temp_c, nozzle_target_c, bed_temp_c,
+              bed_target_c, cooling_fan_pct, chamber_fan_pct, ams_temperature_c,
+              ams_humidity_index, error_code
+            FROM bambu_readings
+        """)
+        _copy_rows(safe, "printer_rollups", source, """
+            SELECT bucket_start, resolution, avg_print_percent, avg_nozzle_temp_c,
+              avg_nozzle_target_c, avg_bed_temp_c, avg_bed_target_c,
+              avg_cooling_fan_pct, avg_chamber_fan_pct, avg_ams_temperature_c,
+              sample_count
+            FROM bambu_rollups
+        """)
+    safe.commit()
+    return safe
+
+
+def _safe_sql_authorizer(action, argument_one, argument_two, database_name, source):
+    """Allow only read operations over the explicitly created safe tables."""
+    if action == sqlite3.SQLITE_READ:
+        return sqlite3.SQLITE_OK if argument_one in SAFE_SQL_TABLES else sqlite3.SQLITE_DENY
+    if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_RECURSIVE):
+        return sqlite3.SQLITE_OK
+    if action == sqlite3.SQLITE_FUNCTION:
+        return sqlite3.SQLITE_OK if str(argument_two).lower() in SAFE_SQL_FUNCTIONS else sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_DENY
+
+
+def query_telemetry(sql):
+    """Run one bounded SELECT query against sanitized, in-memory telemetry tables."""
+    sql = str(sql or "").strip()
+    if not sql or len(sql) > MAX_SQL_LENGTH:
+        return {"error": "Provide one SQL query of up to 5,000 characters."}
+    normalized = sql.rstrip(";").strip()
+    if ";" in normalized or not normalized.lower().startswith(("select", "with")):
+        return {"error": "Only one SELECT query (optionally beginning with WITH) is allowed."}
+
+    safe = _telemetry_database()
+    deadline = time.monotonic() + SQL_TIMEOUT_SECONDS
+    safe.set_authorizer(_safe_sql_authorizer)
+    safe.set_progress_handler(lambda: 1 if time.monotonic() >= deadline else 0, 1_000)
+    try:
+        cursor = safe.execute(normalized)
+        if cursor.description is None:
+            return {"error": "Only result-returning SELECT queries are allowed."}
+        columns = [column[0] for column in cursor.description]
+        rows = cursor.fetchmany(MAX_SQL_ROWS + 1)
+        truncated = len(rows) > MAX_SQL_ROWS
+        return {
+            "columns": columns,
+            "rows": [list(row) for row in rows[:MAX_SQL_ROWS]],
+            "row_count": min(len(rows), MAX_SQL_ROWS),
+            "truncated": truncated,
+            "note": "Times are UTC. Raw samples retain seven days; use 5m, hour, or day rollups for older history. power_rollups.energy_kwh is estimated from average watts and sample count.",
+        }
+    except sqlite3.Error:
+        return {"error": "The query could not be run. Use only the documented telemetry tables, columns, and standard SELECT expressions."}
+    finally:
+        safe.close()
+
+
 TOOL_SCHEMAS = [
     {
         "type": "function",
@@ -234,6 +447,20 @@ TOOL_SCHEMAS = [
             "parameters": {"type": "object", "properties": {"period": {"type": "string", "enum": ["24h", "7d"]}}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_telemetry",
+            "description": """Run one read-only SELECT query against sanitized telemetry tables. Use this for custom comparisons, weekday/weekend or hourly grouping, trends, and correlations. Never use it to request configuration. Available tables: power_samples(observed_at, device_name, watts, voltage, current, total_kwh; seven days); power_rollups(bucket_start, device_name, resolution, avg_watts, max_watts, avg_voltage, min_voltage, max_voltage, sample_count, energy_kwh; resolutions 5m/hour/day); supply_samples(observed_at, voltage, reporting_plugs, inferred_outage); supply_rollups(bucket_start, resolution, avg_voltage, inferred_outage_count, sample_count); hvac_samples(observed_at, indoor_temp_f, indoor_humidity_pct, outdoor_temp_f, cooling_rate_pct, heating_rate_pct, blower_cfm, system_mode, operation, fan_running, aux_active, defrost_active, alert_count); hvac_rollups(bucket_start, resolution, avg_indoor_temp_f, avg_indoor_humidity_pct, avg_outdoor_temp_f, avg_cooling_rate_pct, max_cooling_rate_pct, avg_heating_rate_pct, max_heating_rate_pct, avg_blower_cfm, max_blower_cfm, sample_count); weather_samples(observed_at, temperature_f, humidity_pct, dewpoint_f, wind_mph, wind_direction_degrees, precipitation_last_hour_in, conditions); weather_rollups(bucket_start, resolution, avg_temperature_f, avg_humidity_pct, avg_dewpoint_f, avg_wind_mph, total_precipitation_in, sample_count); printer_samples(observed_at, print_state, print_percent, remaining_minutes, layer_num, total_layer_num, nozzle_temp_c, nozzle_target_c, bed_temp_c, bed_target_c, cooling_fan_pct, chamber_fan_pct, ams_temperature_c, ams_humidity_index, error_code); printer_rollups(bucket_start, resolution, avg_print_percent, avg_nozzle_temp_c, avg_nozzle_target_c, avg_bed_temp_c, avg_bed_target_c, avg_cooling_fan_pct, avg_chamber_fan_pct, avg_ams_temperature_c, sample_count). Times are UTC. For historical energy, sum power_rollups.energy_kwh at one resolution.""",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {"type": "string", "description": "One SELECT query, optionally with a WITH clause. Limit results to the facts needed for the answer."},
+                },
+                "required": ["sql"],
+            },
+        },
+    },
 ]
 
 
@@ -243,6 +470,7 @@ _TOOLS = {
     "supply_voltage": supply_voltage,
     "collection_health": collection_health,
     "printer_activity": printer_activity,
+    "query_telemetry": query_telemetry,
 }
 
 

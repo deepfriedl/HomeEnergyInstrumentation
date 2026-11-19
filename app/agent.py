@@ -15,10 +15,12 @@ MAX_TOOL_ROUNDS = 3
 
 SYSTEM_PROMPT = """You are Home Energy Analyst, a careful assistant for one private home.
 Use the supplied read-only analytics tools for any factual claim about the home.
-Never invent measurements, do not reveal device network configuration, and do not
-offer to control plugs or other equipment. State the period analyzed and mention
-coverage/errors when they could affect the conclusion. Treat correlation as an
-observation, not proof of causation. Keep answers concise and practical."""
+Use query_telemetry when the question needs a custom grouping, comparison, trend,
+or correlation that the summary tools do not provide. Never invent measurements,
+do not reveal device network configuration, and do not offer to control plugs or
+other equipment. State the period analyzed and mention coverage/errors when they
+could affect the conclusion. Treat correlation as an observation, not proof of
+causation. Keep answers concise and practical."""
 
 
 class AgentUnavailable(RuntimeError):

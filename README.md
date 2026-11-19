@@ -117,10 +117,13 @@ to link its power and voltage history to the printer page.
 
 ## Optional local Home Energy Analyst (v3)
 
-The dashboard can use a locally hosted Qwen model through Ollama. The model is
-only given compact results from read-only analytics tools; it has no shell,
-network tools, device-control, arbitrary-SQL, or configuration-file access. Chat
-history remains in the browser tab and is not written to the database.
+The dashboard can use a locally hosted Qwen model through Ollama. The model has
+no shell, network tools, device control, configuration-file access, or direct
+database access. It can run one bounded `SELECT` query at a time against an
+in-memory copy of approved telemetry fields. That copy excludes LAN addresses,
+password hashes, raw device payloads, error text, station identifiers, and all
+configuration. Chat history remains in the browser tab and is not written to
+the database.
 
 The optional `ollama` Compose service has no published host port. It requires
 the NVIDIA Container Toolkit on the server so Docker can access the GPU.
@@ -150,3 +153,8 @@ model volume.
 Agent requests are handled one at a time so concurrent browser tabs do not
 compete for the local GPU. Additional requests wait in a short in-memory queue
 and show a queued status in the dashboard.
+
+The analyst's SQL surface is read-only and limited to 100 result rows with a
+short execution timeout. It supports flexible questions about device power,
+supply voltage, HVAC, weather, and printer telemetry without granting access to
+the application's original SQLite database.
